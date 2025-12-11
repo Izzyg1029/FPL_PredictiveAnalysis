@@ -7,25 +7,19 @@ from feature_health.health_features import build_health_features
 # Test Script for Your Feature Health Pipeline
 #
 # This script:
-#   1. Loads your Ample device export (CSV with ZM1/UM3/MM3 info)
-#   2. Loads the FPL install-date sheet
-#   3. Calls build_health_features() to compute:
-#         - communication features
-#         - install-age features once install dates aer provided
-#         - GPS drift features (will be 0 on single-day data)
-#         - device-specific risk scores (ZM1 / UM3 / MM3)
-#   4. Prints out a preview of key columns
+#   1. Loads Ample device export CSV
+#   2. Loads optional install-date sheet
+#   3. Runs build_health_features()
+#   4. Prints readable summaries + identifies high-risk devices
 #
-# You run this script to verify that the pipeline works end-to-end.
+# Use this to verify that your pipeline works end-to-end.
 # ===================================================================
-# -------------------------------------------------------------------
-# 1. Update these paths to match where your CSVs are saved
-#    These can be in a /data folder in your repo.
-# -------------------------------------------------------------------
+# --------------------------------------------------------
+# File Paths (relative to your repo)
 # --------------------------------------------------------
 
-DEVICE_FILE = "2025-09-13-FPL-device-export.csv"
-INSTALL_FILE = "FPL_install_dates.csv"   # optional
+DEVICE_FILE = "data/2025-09-13-FPL-device-export.csv"
+INSTALL_FILE = "data/FPL_install_dates.csv"   # optional
 
 # Choose threshold for "high risk"
 HIGH_RISK_THRESHOLD = 70
@@ -66,11 +60,14 @@ summary_cols = [
     "Serial",
     "Device_Type",
     "comm_age_hours",
+    # Current & Temp (only appear after scoring functions)
     "LineCurrent_val",
-    "LineTemperatrue_val",
+    "LineTemperatrue_val"
+    # Flags (only exist for certain device types),
     "zero_current_flag",
     "overheat_flag" if "overheat_flag" in df_features.columns else None,
     "battery_low_flag" if "battery_low_flag" in df_features.columns else None,
+    # Device-specific risk scores
     "risk_score_zm1" if "risk_score_zm1" in df_features.columns else None,
     "risk_score_um3" if "risk_score_um3" in df_features.columns else None,
     "risk_score_mm3" if "risk_score_mm3" in df_features.columns else None
@@ -90,10 +87,17 @@ print(summary_df.head(20).to_string(index=False))
 # --------------------------------------------------------
 
 # Combine all risk score columns into one "risk_score" for sorting/display
-df_features["risk_score"] = df_features[
-    ["risk_score_zm1","risk_score_um3","risk_score_mm3"]
-].max(axis=1)
+# ---------------------------------------------------------
 
+risk_zm1 = df_features["risk_score_zm1"] if "risk_score_zm1" in df_features else pd.Series(0, index=df_features.index)
+risk_um3 = df_features["risk_score_um3"] if "risk_score_um3" in df_features else pd.Series(0, index=df_features.index)
+risk_mm3 = df_features["risk_score_mm3"] if "risk_score_mm3" in df_features else pd.Series(0, index=df_features.index)
+# Combine into a single final risk score
+df_features["risk_score"] = pd.concat([risk_zm1, risk_um3, risk_mm3], axis=1).max(axis=1)
+
+# --------------------------------------------------------
+# High-Risk Device Listing
+# --------------------------------------------------------
 high_risk = df_features[df_features["risk_score"] >= HIGH_RISK_THRESHOLD]
 
 print("\n🔥 Devices Above High-Risk Threshold (risk ≥ {}):".format(HIGH_RISK_THRESHOLD))
