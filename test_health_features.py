@@ -1,117 +1,121 @@
 import pandas as pd
 from feature_health.health_features import build_health_features
 
-# --------------------------------------------------------
-# Settings
 # ===================================================================
-# Test Script for Your Feature Health Pipeline
-#
-# This script:
-#   1. Loads Ample device export CSV
-#   2. Loads optional install-date sheet
-#   3. Runs build_health_features()
-#   4. Prints readable summaries + identifies high-risk devices
-#
-# Use this to verify that your pipeline works end-to-end.
+# Test Script for Feature Health Pipeline
 # ===================================================================
-# --------------------------------------------------------
-# File Paths (relative to your repo)
-# --------------------------------------------------------
+# NOTE TO REVIEWERS:
+# This test script is meant to demonstrate example usage of the feature
+# health pipeline and how risk scores are computed. It is NOT part of
+# the production pipeline. The purpose is to:
+#   - show how risk scores behave with sample device data,
+#   - verify the feature engineering logic,
+#   - generate example outputs for code review.
+# 
+# This script also includes optional reporting sections (such as
+# listing devices with no communication for > 3 days) for evaluation
+# purposes only.
 
 DEVICE_FILE = "data/2025-09-13-FPL-device-export.csv"
-INSTALL_FILE = "data/FPL_install_dates.csv"   # optional
+INSTALL_FILE = "data/FPL_install_dates.csv"
 
-# Choose threshold for "high risk"
 HIGH_RISK_THRESHOLD = 70
 
-
-# --------------------------------------------------------
-# Load Data
-# --------------------------------------------------------
 
 print("\n📥 Loading device export...")
 df_raw = pd.read_csv(DEVICE_FILE)
 
-# Try to load install date sheet (optional)
+
 try:
     install_df = pd.read_csv(INSTALL_FILE)
-    print("📥 Install-date sheet loaded successfully.\n")
-except:
+    print("📥 Install-date sheet loaded.\n")
+except FileNotFoundError:
     install_df = None
-    print("⚠️ No install-date sheet found. Aging features will be skipped.\n")
+    print("⚠️ No install-date sheet found. Aging features skipped.\n")
 
-
-# --------------------------------------------------------
-# Build Features
-# --------------------------------------------------------
 
 print("⚙️ Generating health features...")
 df_features = build_health_features(df_raw, install_df=install_df)
-
-print("✅ Features generated successfully!\n")
+print("✅ Features generated!\n")
 
 
 # --------------------------------------------------------
-# Clean Summary Table
+# Summary Table
 # --------------------------------------------------------
 
-# Pick columns that make sense for human inspection
 summary_cols = [
     "Serial",
     "Device_Type",
-    "comm_age_hours",
-    # Current & Temp (only appear after scoring functions)
-    "LineCurrent_val",
-    "LineTemperatrue_val"
-    # Flags (only exist for certain device types),
-    "zero_current_flag",
-    "overheat_flag" if "overheat_flag" in df_features.columns else None,
-    "battery_low_flag" if "battery_low_flag" in df_features.columns else None,
-    # Device-specific risk scores
-    "risk_score_zm1" if "risk_score_zm1" in df_features.columns else None,
-    "risk_score_um3" if "risk_score_um3" in df_features.columns else None,
-    "risk_score_mm3" if "risk_score_mm3" in df_features.columns else None
+    "comm_age_days",
+    "LineCurrent_val" if "LineCurrent_val" in df_features else None,
+    "LineTemperatrue_val" if "LineTemperatrue_val" in df_features else None,
+    "zero_current_flag" if "zero_current_flag" in df_features else None,
+    "overheat_flag" if "overheat_flag" in df_features else None,
+    "battery_low_flag" if "battery_low_flag" in df_features else None,
+    "risk_score_zm1" if "risk_score_zm1" in df_features else None,
+    "risk_score_um3" if "risk_score_um3" in df_features else None,
+    "risk_score_mm3" if "risk_score_mm3" in df_features else None,
 ]
 
-# Remove invalid (None) entries
-summary_cols = [c for c in summary_cols if c in df_features.columns]
+summary_cols = [c for c in summary_cols if c]
 
-summary_df = df_features[summary_cols]
-
-print("📊 Device Health Summary (first 20 rows):")
-print(summary_df.head(20).to_string(index=False))
+print("📊 Device Summary (first 20 rows):")
+print(df_features[summary_cols].head(20).to_string(index=False))
 
 
 # --------------------------------------------------------
-# Highlight At-Risk Devices
+# Combine Risk Scores Safely
 # --------------------------------------------------------
-
-# Combine all risk score columns into one "risk_score" for sorting/display
-# ---------------------------------------------------------
 
 risk_zm1 = df_features["risk_score_zm1"] if "risk_score_zm1" in df_features else pd.Series(0, index=df_features.index)
 risk_um3 = df_features["risk_score_um3"] if "risk_score_um3" in df_features else pd.Series(0, index=df_features.index)
 risk_mm3 = df_features["risk_score_mm3"] if "risk_score_mm3" in df_features else pd.Series(0, index=df_features.index)
-# Combine into a single final risk score
+
 df_features["risk_score"] = pd.concat([risk_zm1, risk_um3, risk_mm3], axis=1).max(axis=1)
 
-# --------------------------------------------------------
-# High-Risk Device Listing
-# --------------------------------------------------------
-high_risk = df_features[df_features["risk_score"] >= HIGH_RISK_THRESHOLD]
 
-print("\n🔥 Devices Above High-Risk Threshold (risk ≥ {}):".format(HIGH_RISK_THRESHOLD))
 
-if high_risk.empty:
-    print("No high-risk devices found today. ✅")
+# --------------------------------------------------------
+# Show Top 10 Highest-Risk Devices
+# --------------------------------------------------------
+
+print("\n🔥 Top 10 Highest-Risk Devices:")
+
+# Safely pull risk score columns if device type doesn’t exist
+risk_zm1 = df_features["risk_score_zm1"] if "risk_score_zm1" in df_features else pd.Series(0, index=df_features.index)
+risk_um3 = df_features["risk_score_um3"] if "risk_score_um3" in df_features else pd.Series(0, index=df_features.index)
+risk_mm3 = df_features["risk_score_mm3"] if "risk_score_mm3" in df_features else pd.Series(0, index=df_features.index)
+
+# Combine risk into one field
+df_features["risk_score"] = pd.concat([risk_zm1, risk_um3, risk_mm3], axis=1).max(axis=1)
+
+# Sort by risk descending and take top 10
+top10 = df_features.nlargest(10, "risk_score")
+
+if top10.empty:
+    print("No devices have any risk score computed.")
 else:
-    print(high_risk[["Serial", "Device_Type", "risk_score", "comm_age_hours"]]
-          .sort_values("risk_score", ascending=False)
+    print(top10[["Serial", "Device_Type", "risk_score", "comm_age_days"]]
           .to_string(index=False))
 
+# --------------------------------------------------------
+# Devices With No Communication in > 3 Days
+# --------------------------------------------------------
 
-# --------------------------------------------------------
-# Done
-# --------------------------------------------------------
+NO_COMM_THRESHOLD_DAYS = 3
+
+no_comm = df_features[df_features["comm_age_days"] > NO_COMM_THRESHOLD_DAYS]
+
+print(f"\n🚨 Devices With No Communication for > {NO_COMM_THRESHOLD_DAYS} Days:")
+
+if no_comm.empty:
+    print("All devices communicated within the past 3 days. 👍")
+else:
+    print(
+        no_comm[["Serial", "Device_Type", "comm_age_days", "risk_score"]]
+        .sort_values("comm_age_days", ascending=False)
+        .to_string(index=False)
+    )
+
 
 print("\n🎉 Test script completed.\n")
