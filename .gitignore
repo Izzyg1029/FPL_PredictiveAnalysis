@@ -1,3 +1,5 @@
+#.gitignore is used to prevent generated data files, Python cache files, and temporary Excel artifacts 
+#from being committed to the repository, ensuring a clean and reproducible codebase.#
 # =========================
 # Data files (generated)
 # =========================
