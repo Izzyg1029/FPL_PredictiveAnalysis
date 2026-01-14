@@ -1,1 +1,4 @@
-Verification Test
+Requirements:
+pandas
+numpy
+openpyxl
