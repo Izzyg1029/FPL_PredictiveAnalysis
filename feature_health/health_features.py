@@ -7,17 +7,42 @@ from typing import Optional, List, Dict
 # ====================================================
 
 DEVICE_LIFETIMES_DAYS: Dict[str, int] = {
-    "ZM1": 5 * 365,   # battery-powered overhead
-    "UM3": 10 * 365,  # underground
-    "MM3": 8 * 365,   # line-powered overhead
+    "ZM1": 10 * 365,   # battery-powered overhead
+    "UM3": 10 * 365,  # # Conservative estimate (underground typically lasts long)
+    "MM3": 10 * 365,   # line-powered overhead
 }
 
 TEMP_LIMITS_C: Dict[str, float] = {
-    "ZM1": 45.0,   # ZM1 overheats above 45°C
-    "UM3": 40.0,   # UM3 overheats above 40°C
-    "MM3": 50.0,   # MM3 overheats above 50°C
+    "ZM1": 70.0,   # From spec sheet: -40°C to +70°C
+    "UM3": 85.0,   # From spec sheet: -40°C to +85°C
+    "MM3": 85.0,   # From spec sheet: -40°C to +85°C
 }
+# ====================================================
+# CURRENT LIMITS Configuration
+# ====================================================
 
+# Normal operating current ranges (A)
+CURRENT_LIMITS_A: Dict[str, Dict[str, float]] = {
+    "ZM1": {
+        "min_normal": 1.0,      # Below this might be problematic
+        "max_normal": 800.0,    # Max operating per spec
+        "warning_threshold": 700.0,  # Warn before hitting max
+        "critical_threshold": 850.0  # Above operating range
+    },
+    "UM3": {
+        "min_normal": 1.0,
+        "max_normal": 600.0,
+        "warning_threshold": 550.0,
+        "critical_threshold": 650.0
+    },
+    "MM3": {
+        "min_normal": 1.0,
+        "max_normal": 800.0,
+        "warning_threshold": 700.0,
+        "critical_threshold": 850.0,
+        "off_peak_max": 12.0    # For mesh operation per spec
+    }
+}
 GPS_JUMP_THRESHOLD_M: float = 30.0  # meters
 
 
@@ -241,23 +266,29 @@ def compute_zm1_features(df: pd.DataFrame) -> pd.DataFrame:
     )
 
     # Flags
+    limits = CURRENT_LIMITS_A["ZM1"]
     df["zero_current_flag"] = (df["LineCurrent_val"] == 0.0).astype(int)
-    df["overheat_flag"] = (
-        df["LineTemperature_val"] > TEMP_LIMITS_C["ZM1"]
-    ).astype(int)
-
+    df["low_current_flag"] = ((df["LineCurrent_val"] > 0) & 
+                              (df["LineCurrent_val"] < limits["min_normal"])).astype(int)
+    df["high_current_flag"] = (df["LineCurrent_val"] > limits["warning_threshold"]).astype(int)
+    df["critical_current_flag"] = (df["LineCurrent_val"] > limits["critical_threshold"]).astype(int)
     # Risk formula (ZM1)
     risk = (
-        0.4 * normalize(df["comm_age_days"]) +
-        0.3 * normalize(df["battery_report_age_days"]) +
-        0.2 * normalize(df["LineTemperature_val"]) +
-        0.1 * normalize(df["zero_current_flag"])
+        0.25 * normalize(df["comm_age_days"]) +
+        0.25 * normalize(df["battery_report_age_days"]) +
+        0.15 * normalize(df["LineTemperature_val"]) +  
+        0.05 * normalize(df["zero_current_flag"]) +    
+        0.2 * normalize(df["pct_life_used"]) +
+        0.1 * normalize(df["high_current_flag"] + df["critical_current_flag"])  
     ) * 100.0
 
     # Penalties
     risk += 20.0 * df["battery_low_flag"]
     risk += 10.0 * df["overheat_flag"]
-
+    risk += 15.0 * df["critical_current_flag"]
+    risk += 10.0 * df["high_current_flag"]
+    risk += 5.0 * df["low_current_flag"]
+    risk += np.where(df["pct_life_used"] > 0.9, 15.0, 0.0) # 90%+ life used
     df["risk_score_zm1"] = risk.apply(clamp)
     return df
 
@@ -269,28 +300,52 @@ def compute_um3_features(df: pd.DataFrame) -> pd.DataFrame:
       - LineCurrent_val
       - LineTemperature_val
       - zero_current_flag
+      - low_current_flag
+      - high_current_flag
+      - critical_current_flag
       - overheat_flag
       - risk_score_um3
     """
     df = df.copy()
 
+    # Line current & temperature (KEEP THESE)
     df["LineCurrent_val"] = pd.to_numeric(df.get("LineCurrent", 0.0), errors="coerce")
     df["LineTemperature_val"] = pd.to_numeric(
         df.get("LineTemperature", 0.0), errors="coerce"
     )
 
+    # Current risk flags for UM3 (KEEP zero_current_flag, ADD new flags)
+    limits = CURRENT_LIMITS_A["UM3"]
+    
+    # KEEP THIS LINE:
     df["zero_current_flag"] = (df["LineCurrent_val"] == 0.0).astype(int)
+    
+    # ADD THESE NEW FLAGS:
+    df["low_current_flag"] = ((df["LineCurrent_val"] > 0) & 
+                              (df["LineCurrent_val"] < limits["min_normal"])).astype(int)
+    df["high_current_flag"] = (df["LineCurrent_val"] > limits["warning_threshold"]).astype(int)
+    df["critical_current_flag"] = (df["LineCurrent_val"] > limits["critical_threshold"]).astype(int)
+    
+    # KEEP THIS LINE (but with updated temperature limit):
     df["overheat_flag"] = (
-        df["LineTemperature_val"] > TEMP_LIMITS_C["UM3"]
+        df["LineTemperature_val"] > TEMP_LIMITS_C["UM3"]  # Now 85.0°C instead of 40.0°C
     ).astype(int)
 
+    # UM3 Risk Formula (with current magnitude)
     risk = (
-        0.5 * normalize(df["comm_age_days"]) +
-        0.3 * normalize(df["LineTemperature_val"]) +
-        0.2 * normalize(df["zero_current_flag"])
+        0.3 * normalize(df["comm_age_days"]) +          # Communication age
+        0.25 * normalize(df["LineTemperature_val"]) +   # Temperature
+        0.05 * normalize(df["zero_current_flag"]) +     # Zero current
+        0.2 * normalize(df["pct_life_used"]) +          # Device age
+        0.2 * normalize(df["high_current_flag"] + df["critical_current_flag"])  # Current issues
     ) * 100.0
 
+    # Enhanced penalties
     risk += 10.0 * df["overheat_flag"]
+    risk += 15.0 * df["critical_current_flag"]
+    risk += 10.0 * df["high_current_flag"]
+    risk += 5.0 * df["low_current_flag"]
+    risk += np.where(df["pct_life_used"] > 0.9, 15.0, 0.0)
 
     df["risk_score_um3"] = risk.apply(clamp)
     return df
@@ -312,21 +367,34 @@ def compute_mm3_features(df: pd.DataFrame) -> pd.DataFrame:
     df["LineTemperature_val"] = pd.to_numeric(
         df.get("LineTemperature", 0.0), errors="coerce"
     )
-
+    # Current risk flags for MM3
+    limits = CURRENT_LIMITS_A["MM3"]
     df["zero_current_flag"] = (df["LineCurrent_val"] == 0.0).astype(int)
+    df["low_current_flag"] = ((df["LineCurrent_val"] > 0) & 
+                              (df["LineCurrent_val"] < limits["min_normal"])).astype(int)
+    df["high_current_flag"] = (df["LineCurrent_val"] > limits["warning_threshold"]).astype(int)
+    df["critical_current_flag"] = (df["LineCurrent_val"] > limits["critical_threshold"]).astype(int)
+    df["high_offpeak_flag"] = (df["LineCurrent_val"] > limits["off_peak_max"]).astype(int)  # MM3 specific
+    
     df["overheat_flag"] = (
         df["LineTemperature_val"] > TEMP_LIMITS_C["MM3"]
     ).astype(int)
 
     risk = (
-        0.6 * normalize(df["comm_age_days"]) +
-        0.2 * normalize(df["LineCurrent_val"]) +
-        0.2 * normalize(df["LineTemperature_val"])
+        0.35 * normalize(df["comm_age_days"]) +         # Reduced from 0.5
+        0.15 * normalize(df["LineCurrent_val"]) +       # Current magnitude
+        0.10 * normalize(df["LineTemperature_val"]) +   # Temperature
+        0.20 * normalize(df["pct_life_used"]) +         # Device age
+        0.20 * normalize(df["high_current_flag"] + df["critical_current_flag"])  # Current issues
     ) * 100.0
 
     # Extra penalty for severe overheat
     risk += 15.0 * df["overheat_flag"]
-
+    risk += 15.0 * df["critical_current_flag"]   # ← ADD
+    risk += 10.0 * df["high_current_flag"]       # ← ADD
+    risk += 5.0 * df["low_current_flag"]         # ← ADD
+    risk += 8.0 * df["high_offpeak_flag"]        # MM3 specific
+    risk += np.where(df["pct_life_used"] > 0.9, 20.0, 0.0)
     df["risk_score_mm3"] = risk.apply(clamp)
     return df
 
@@ -348,6 +416,26 @@ def explain_risk(row):
     if row.get("overheat_flag", 0) == 1:
         reasons.append("Over temperature condition")
 
+  # --- Current magnitude conditions (NEW) ---
+    current = row.get("LineCurrent_val", 0.0)
+    device_type = str(row.get("Device_Type", ""))
+    
+    if device_type in CURRENT_LIMITS_A:
+        limits = CURRENT_LIMITS_A[device_type]
+        
+        # Already covered zero current above, so check other conditions
+        if current > 0 and current < limits["min_normal"]:
+            reasons.append(f"Low current ({current:.1f}A)")
+        elif current > limits["warning_threshold"]:
+            reasons.append(f"High current ({current:.1f}A)")
+        elif current > limits["critical_threshold"]:
+            reasons.append(f"CRITICAL: Current above operating range ({current:.1f}A)")
+
+    if pd.notna(row.get("pct_life_used", None)):
+        if row["pct_life_used"] > 0.9:
+            reasons.append("Device past 90% expected life")
+        elif row["pct_life_used"] > 0.7:
+            reasons.append("Device aging (70%+ life used)")
     # --- ZM1-specific ---
     if "ZM1" in str(row.get("Device_Type", "")):
         if row.get("battery_low_flag", 0) == 1:
@@ -440,6 +528,10 @@ def build_health_features(
         "LineCurrent_val",
         "LineTemperature_val",
         "zero_current_flag",
+        "low_current_flag",     
+        "high_current_flag",     
+        "critical_current_flag", 
+        "high_offpeak_flag",     # (MM3 specific)
         "overheat_flag",
         "risk_score_zm1",
         "risk_score_um3",
@@ -464,6 +556,9 @@ def build_health_features(
             "LineCurrent_val",
             "LineTemperature_val",
             "zero_current_flag",
+            "low_current_flag",      # ← ADD
+            "high_current_flag",     # ← ADD
+            "critical_current_flag", # ← ADD
             "overheat_flag",
             "risk_score_zm1",
         ]:
@@ -477,6 +572,9 @@ def build_health_features(
             "LineCurrent_val",
             "LineTemperature_val",
             "zero_current_flag",
+            "low_current_flag",      # ← ADD
+            "high_current_flag",     # ← ADD
+            "critical_current_flag", # ← ADD
             "overheat_flag",
             "risk_score_um3",
         ]:
@@ -490,6 +588,10 @@ def build_health_features(
             "LineCurrent_val",
             "LineTemperature_val",
             "zero_current_flag",
+            "low_current_flag",      # ← ADD
+            "high_current_flag",     # ← ADD
+            "critical_current_flag", # ← ADD
+            "high_offpeak_flag",     # ← ADD
             "overheat_flag",
             "risk_score_mm3",
         ]:
