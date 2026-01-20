@@ -6,7 +6,7 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 PROJECT_ROOT = SCRIPT_DIR.parent
 
 INPUT_DIR = PROJECT_ROOT / "data" / "raw"
-OUTPUT_DIR = PROJECT_ROOT / "data" / "clean"
+OUTPUT_DIR = PROJECT_ROOT / "data" / "clean" / "daily"
 
 OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -45,11 +45,11 @@ for excel_file in excel_files:
     df_clean = df_raw[clean_mask].copy()
     
     # Create output filename (add -clean before extension)
-    output_name = f"{excel_file.stem}-clean{excel_file.suffix}"
+    output_name = f"{excel_file.stem}-clean.csv"  # Save as CSV
     output_file = OUTPUT_DIR / output_name
     
     # Save clean data
-    df_clean.to_excel(output_file, index=False)
+    df_clean.to_csv(output_file, index=False)  # Save as CSV
     
     print(f"\n   ✅ Clean devices: {len(df_clean)}/{len(df_raw)}")
     print(f"   💾 Saved to: {output_file.name}")

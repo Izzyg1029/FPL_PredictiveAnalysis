@@ -32,19 +32,39 @@ OUT_DIR = Path(project_root) / "data" / "processed" / "daily"
 
 OUT_DIR.mkdir(parents=True, exist_ok=True)
 
-# Find all clean Excel files
+# Find all clean data files (both CSV and Excel)
+csv_files = list(CLEAN_DAILY_DIR.glob("*-clean.csv"))
 excel_files = list(CLEAN_DAILY_DIR.glob("*-clean.xlsx"))
-print(f"📁 Found {len(excel_files)} Excel file(s) to process")
+all_files = csv_files + excel_files
+print(f"📁 Found {len(all_files)} clean file(s) to process")
 
-for file in excel_files:
+for file in all_files:
     print(f"\n{'='*60}")
     print(f"🧠 Processing: {file.name}")
     print(f"{'='*60}")
     
     try:
-        # Load the data
-        df = pd.read_excel(file)
-        print(f"   📊 Loaded {len(df)} rows")
+        # Load the data based on file extension
+        if file.suffix.lower() == '.csv':
+            df = pd.read_csv(file)
+            print(f"   📊 Loaded CSV: {len(df)} rows")
+            print(f"   Columns: {', '.join(df.columns[:5])}...")  # Show first 5 columns
+
+            # DEBUG: Print all columns to see what we have
+            print(f"   All columns: {list(df.columns)}")
+
+            # Check for InstallDate_dt column
+            if 'InstallDate_dt' not in df.columns:
+                print(f"   ⚠️  InstallDate_dt column not found in main CSV!")
+                print(f"   Looking for alternative date columns...")
+                date_cols = [col for col in df.columns if 'date' in col.lower() or 'install' in col.lower()]
+                if date_cols:
+                    print(f"   Found possible date columns: {date_cols}")
+
+        else:  # .xlsx, .xls
+            df = pd.read_excel(file)
+            print(f"   📊 Loaded Excel: {len(df)} rows")
+        
         print(f"   Columns: {', '.join(df.columns[:5])}...")  # Show first 5 columns
         
         # OPTIONAL: Load install dates if available
@@ -55,14 +75,21 @@ for file in excel_files:
             print(f"   📅 Loaded {len(install_df)} install records")
         else:
             print(f"   ⚠️  No install_dates.csv found - device age features will be limited")
-        
-        # Build health features
-        if install_df is not None:
-            df_features = build_health_features(df, install_df=install_df)
-            print(f"   ✅ Built features WITH device age data")
+      
+      # Check if health features already exist ======
+        # Check if risk_score already exists
+        if 'risk_score' in df.columns:
+            print(f"   ✅ Health features already calculated in CSV!")
+            print(f"   📊 Risk scores: min={df['risk_score'].min():.2f}, max={df['risk_score'].max():.2f}, mean={df['risk_score'].mean():.2f}")
+            df_features = df
         else:
-            df_features = build_health_features(df)
-            print(f"   ✅ Built features WITHOUT device age data")
+            # Build features normally
+            if install_df is not None:
+                df_features = build_health_features(df, install_df=install_df)
+                print(f"   ✅ Built features WITH device age data")
+            else:
+                df_features = build_health_features(df)
+                print(f"   ✅ Built features WITHOUT device age data")
         
         # Show statistics
         print(f"\n   📈 Risk Score Statistics:")

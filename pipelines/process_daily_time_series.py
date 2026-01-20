@@ -1,4 +1,4 @@
-# pipelines/process_daily_time_series.py
+# pipelines/process_daily_time_series.py (ZM1 ONLY VERSION)
 import pandas as pd
 import numpy as np
 from pathlib import Path
@@ -21,7 +21,7 @@ def process_daily_time_series():
     Pipeline to process daily ZM1 data into a time series dataset.
     """
     print("=" * 70)
-    print("DAILY TIME SERIES PROCESSING PIPELINE")
+    print("DAILY TIME SERIES PROCESSING PIPELINE - ZM1 ONLY")
     print("=" * 70)
     
     # Paths (relative to project root) - UPDATED FOR NEW STRUCTURE
@@ -44,7 +44,6 @@ def process_daily_time_series():
         print("⚠️  No install dates file found - device age features will be limited")
     
     # Get all daily files
-    # Get all daily files (BOTH CSV AND EXCEL)
     excel_files = sorted(RAW_DAILY_DIR.glob("*.xlsx"))
     csv_files = sorted(RAW_DAILY_DIR.glob("*.csv"))
     daily_files = list(excel_files) + list(csv_files)
@@ -52,9 +51,8 @@ def process_daily_time_series():
     print(f"📁 Found {len(daily_files)} daily files in {RAW_DAILY_DIR}")
     print(f"   Excel files: {len(excel_files)}, CSV files: {len(csv_files)}")
     if not daily_files:
-        print("❌ No daily CSV files found!")
+        print("❌ No daily files found!")
         print(f"   Expected path: {RAW_DAILY_DIR}")
-        print(f"   Files should be named like: 2024-01-01.csv, 2024-01-02.csv, etc.")
         return
     
     all_daily_data = []
@@ -65,36 +63,39 @@ def process_daily_time_series():
         print(f"\n[{i+1}/{len(daily_files)}] Processing: {daily_file.name}")
         
         try:
-         # Load daily data (support both Excel and CSV)
+            # Load daily data (support both Excel and CSV)
             if daily_file.suffix.lower() == '.xlsx':
                 df_daily = pd.read_excel(daily_file)
             else:  # .csv
                 df_daily = pd.read_csv(daily_file)
-            # Extract date from filename (format: YYYY-MM-DD.csv)
-            date_from_filename = daily_file.stem
-         
             
-            # Check if we have ZM1 devices
+            date_from_filename = daily_file.stem
+            
+            # Check if we have Device_Type column
             if 'Device_Type' not in df_daily.columns:
                 print(f"   ⚠️  No 'Device_Type' column, checking for device type in other columns...")
-                # Look for device type in other columns
                 type_cols = [col for col in df_daily.columns if 'type' in col.lower() or 'device' in col.lower()]
                 if type_cols:
                     df_daily = df_daily.rename(columns={type_cols[0]: 'Device_Type'})
                     print(f"   🔧 Renamed '{type_cols[0]}' to 'Device_Type'")
+            
+            # Show ALL device types before filtering
+            if 'Device_Type' in df_daily.columns:
+                print(f"   📊 ALL Device Types in file:")
+                counts = df_daily['Device_Type'].value_counts()
+                for dev_type, count in counts.items():
+                    percentage = (count / len(df_daily)) * 100
+                    print(f"      {dev_type}: {count} ({percentage:.1f}%)")
             
             # Filter to ZM1 devices only
             zm1_mask = df_daily['Device_Type'].astype(str).str.contains('ZM1', case=False, na=False)
             df_zm1 = df_daily[zm1_mask].copy()
             
             if len(df_zm1) == 0:
-                print(f"   ⚠️  No ZM1 devices found in this file")
-                # Show what device types are present
-                device_types = df_daily['Device_Type'].unique()[:5]
-                print(f"   Available device types: {device_types}")
+                print(f"   ⚠️  No ZM1 devices found in this file - skipping")
                 continue
             
-            print(f"   🔋 Found {len(df_zm1)} ZM1 devices")
+            print(f"   🔋 Filtered to {len(df_zm1)} ZM1 devices ({(len(df_zm1)/len(df_daily))*100:.1f}% of total)")
             
             # Add date column if not present
             if 'date' not in df_zm1.columns:
@@ -109,8 +110,8 @@ def process_daily_time_series():
             if 'date' not in df_health.columns:
                 df_health['date'] = date_from_filename
             
-            # Save cleaned daily file
-            clean_file = CLEAN_DAILY_DIR / f"{daily_file.stem}-clean.csv"
+            # Save cleaned daily file with ZM1-only indicator
+            clean_file = CLEAN_DAILY_DIR / f"{daily_file.stem}-clean-zm1only.csv"  # CHANGED NAME
             df_health.to_csv(clean_file, index=False)
             
             # Add to combined time series
@@ -122,11 +123,13 @@ def process_daily_time_series():
                 'file': daily_file.name,
                 'total_rows': len(df_daily),
                 'zm1_rows': len(df_zm1),
+                'other_rows': len(df_daily) - len(df_zm1),
+                'zm1_percentage': (len(df_zm1) / len(df_daily)) * 100,
                 'health_features': len(df_health.columns),
                 'processed': True
             })
             
-            print(f"   ✅ Saved to: {clean_file}")
+            print(f"   ✅ Saved ZM1-only file: {clean_file.name}")
             print(f"   📈 Generated {len(df_health.columns)} health features")
             
         except Exception as e:
@@ -136,6 +139,8 @@ def process_daily_time_series():
                 'file': daily_file.name,
                 'total_rows': 0,
                 'zm1_rows': 0,
+                'other_rows': 0,
+                'zm1_percentage': 0,
                 'health_features': 0,
                 'processed': False,
                 'error': str(e)[:200]
@@ -144,7 +149,7 @@ def process_daily_time_series():
     # Create combined time series
     if all_daily_data:
         print("\n" + "=" * 70)
-        print("CREATING COMBINED TIME SERIES")
+        print("CREATING ZM1-ONLY TIME SERIES")
         print("=" * 70)
         
         time_series_df = pd.concat(all_daily_data, ignore_index=True)
@@ -166,20 +171,30 @@ def process_daily_time_series():
         
         # Save statistics (in clean/time_series/)
         stats_df = pd.DataFrame(processing_stats)
-        stats_file = TIME_SERIES_DIR / "daily_processing_stats.csv"  # Updated name
+        stats_file = TIME_SERIES_DIR / "daily_processing_stats.csv"
         stats_df.to_csv(stats_file, index=False)
         
-        print(f"\n🎉 PIPELINE COMPLETE!")
-        print(f"✅ Raw time series: {raw_ts_file} ({len(time_series_df):,} records)")
-        print(f"✅ Enhanced time series: {enhanced_ts_file}")
+        print(f"\n🎉 ZM1-ONLY PIPELINE COMPLETE!")
+        print(f"✅ Raw ZM1 time series: {raw_ts_file} ({len(time_series_df):,} records)")
+        print(f"✅ Enhanced ZM1 time series: {enhanced_ts_file}")
         print(f"✅ Processing stats: {stats_file}")
         
         # Summary
-        print(f"\n📊 SUMMARY:")
+        print(f"\n📊 ZM1-ONLY SUMMARY:")
         print(f"   Unique ZM1 devices: {time_series_df['Serial'].nunique()}")
         print(f"   Date range: {time_series_df['date'].min()} to {time_series_df['date'].max()}")
         print(f"   Total days processed: {time_series_df['date'].nunique()}")
         print(f"   Successfully processed: {sum(stats_df['processed'])}/{len(stats_df)} days")
+        
+        # Show overall ZM1 statistics
+        if len(processing_stats) > 0:
+            total_raw = sum([s['total_rows'] for s in processing_stats if s['processed']])
+            total_zm1 = sum([s['zm1_rows'] for s in processing_stats if s['processed']])
+            avg_percentage = np.mean([s['zm1_percentage'] for s in processing_stats if s['processed']])
+            print(f"\n📈 ZM1 EXTRACTION STATS:")
+            print(f"   Total raw devices processed: {total_raw:,}")
+            print(f"   Total ZM1 devices extracted: {total_zm1:,}")
+            print(f"   Average ZM1 percentage: {avg_percentage:.1f}%")
         
     else:
         print("\n❌ No ZM1 data was processed!")
