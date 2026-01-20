@@ -2,55 +2,65 @@ import pandas as pd
 from pathlib import Path
 import os
 
-# --------------------------------------------------------
-# Base directory = folder where this script lives
-# --------------------------------------------------------
-BASE_DIR = Path(__file__).resolve().parent
+SCRIPT_DIR = Path(__file__).resolve().parent
+PROJECT_ROOT = SCRIPT_DIR.parent
 
-INPUT_DIR = BASE_DIR / "data" / "raw"
-OUTPUT_DIR = BASE_DIR / "data" / "clean"
+INPUT_DIR = PROJECT_ROOT / "data" / "raw"
+OUTPUT_DIR = PROJECT_ROOT / "data" / "clean"
 
-INPUT_DIR.mkdir(parents=True, exist_ok=True)
 OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
-DEVICE_FILE = INPUT_DIR / "9-13.xlsx"
-OUTPUT_CLEAN = OUTPUT_DIR / "9-13-new.xlsx"
-OUTPUT_REJECTED = OUTPUT_DIR / "9-13-rejected.xlsx"
+print("=" * 60)
+print("BATCH CLEANING - PROCESSING ALL EXCEL FILES")
+print("=" * 60)
 
-print("🧭 Current working directory:", os.getcwd())
-print("📌 Script folder (BASE_DIR):", BASE_DIR)
-print("🔎 Looking for file at:", DEVICE_FILE)
-#looking for the file
-if not DEVICE_FILE.exists():
-    print("\n❌ File still not found.")
-    print("📂 Files currently in data/raw are:")
-    for p in INPUT_DIR.glob("*"):
-        print(" -", p.name)
-    raise FileNotFoundError(f"Missing: {DEVICE_FILE}")
+# Get ALL Excel files in the raw folder
+excel_files = list(INPUT_DIR.glob("*.xlsx")) + list(INPUT_DIR.glob("*.xls"))
 
-# --------------------------------------------------------
-# Load data
-# --------------------------------------------------------
-df_raw = pd.read_excel(DEVICE_FILE)
-print(f"\n📥 Devices loaded: {len(df_raw)}")
+if not excel_files:
+    print(f"❌ No Excel files found in {INPUT_DIR}")
+    exit()
 
-CRITICAL_COLS = ["Device_Type", "Last_Heard", "LineCurrent", "LineTemperatrue"]
+print(f"📁 Found {len(excel_files)} Excel file(s) to process:")
 
-missing = [c for c in CRITICAL_COLS if c not in df_raw.columns]
-if missing:
-    raise KeyError(f"Missing required columns: {missing}")
+# Process each file
+for excel_file in excel_files:
+    print(f"\n{'='*50}")
+    print(f"📥 Processing: {excel_file.name}")
+    print(f"{'='*50}")
+    
+    # Load data
+    df_raw = pd.read_excel(excel_file)
+    print(f"   Total devices loaded: {len(df_raw)}")
+    
+    # Show device types
+    if 'Device_Type' in df_raw.columns:
+        print(f"\n   📊 Device types in raw data:")
+        print(f"   {df_raw['Device_Type'].value_counts().to_string()}")
+    
+    # ======================================================
+    # CLEANING: Only remove rows missing Device_Type or Last_Heard
+    # ======================================================
+    clean_mask = df_raw['Device_Type'].notna() & df_raw['Last_Heard'].notna()
+    df_clean = df_raw[clean_mask].copy()
+    
+    # Create output filename (add -clean before extension)
+    output_name = f"{excel_file.stem}-clean{excel_file.suffix}"
+    output_file = OUTPUT_DIR / output_name
+    
+    # Save clean data
+    df_clean.to_excel(output_file, index=False)
+    
+    print(f"\n   ✅ Clean devices: {len(df_clean)}/{len(df_raw)}")
+    print(f"   💾 Saved to: {output_file.name}")
+    
+    # Show clean device distribution
+    if 'Device_Type' in df_clean.columns:
+        print(f"\n   📊 Device types in clean data:")
+        print(f"   {df_clean['Device_Type'].value_counts().to_string()}")
 
-broken_mask = df_raw[CRITICAL_COLS].isnull().any(axis=1)
-df_clean = df_raw[~broken_mask].copy()
-df_rejected = df_raw[broken_mask].copy()
-
-df_rejected["rejection_reason"] = df_rejected.apply(
-    lambda r: ", ".join([c for c in CRITICAL_COLS if pd.isna(r[c])]),
-    axis=1
-)
-
-df_clean.to_excel(OUTPUT_CLEAN, index=False)
-df_rejected.to_excel(OUTPUT_REJECTED, index=False)
-
-print(f"✅ Clean devices: {len(df_clean)} → {OUTPUT_CLEAN}")
-print(f"❌ Rejected devices: {len(df_rejected)} → {OUTPUT_REJECTED}")
+print(f"\n{'='*60}")
+print("✅ BATCH PROCESSING COMPLETE!")
+print(f"   Processed {len(excel_files)} file(s)")
+print(f"   Clean files saved to: {OUTPUT_DIR}")
+print("=" * 60)
