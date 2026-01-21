@@ -17,7 +17,12 @@ TEMP_LIMITS_C: Dict[str, float] = {
     "UM3": 85.0,   # From spec sheet: -40°C to +85°C
     "MM3": 85.0,   # From spec sheet: -40°C to +85°C
 }
-
+# Which devices measure what?
+DEVICE_CAPABILITIES = {
+    "ZM1": {"measures_current": False, "measures_temp": False, "measures_battery": True},
+    "UM3": {"measures_current": False, "measures_temp": False, "measures_battery": False},
+    "MM3": {"measures_current": True, "measures_temp": True, "measures_battery": False},
+}
 # ====================================================
 # CURRENT LIMITS Configuration
 # ====================================================
@@ -25,16 +30,16 @@ TEMP_LIMITS_C: Dict[str, float] = {
 # Normal operating current ranges (A)
 CURRENT_LIMITS_A: Dict[str, Dict[str, float]] = {
     "ZM1": {
-        "min_normal": 1.0,      # Below this might be problematic
-        "max_normal": 800.0,    # Max operating per spec
-        "warning_threshold": 700.0,  # Warn before hitting max
-        "critical_threshold": 850.0  # Above operating range
+        "min_normal": 0,      # Below this might be problematic
+        "max_normal": 0,    # Max operating per spec
+        "warning_threshold": 0,  # Warn before hitting max
+        "critical_threshold": 0  # Above operating range
     },
     "UM3": {
-        "min_normal": 1.0,
-        "max_normal": 600.0,
-        "warning_threshold": 550.0,
-        "critical_threshold": 650.0
+        "min_normal": 0,
+        "max_normal": 0,
+        "warning_threshold": 0,
+        "critical_threshold": 0
     },
     "MM3": {
         "min_normal": 1.0,
@@ -46,8 +51,6 @@ CURRENT_LIMITS_A: Dict[str, Dict[str, float]] = {
 }
 
 GPS_JUMP_THRESHOLD_M: float = 30.0  # meters
-
-
 # ====================================================
 # Helper Functions
 # ====================================================
@@ -279,90 +282,91 @@ def compute_zm1_features(df: pd.DataFrame) -> pd.DataFrame:
             / (3600.0 * 24.0)
         ).fillna(0.0)
 
-    # Line current & temperature - CAP THESE VALUES
-    df["LineCurrent_val"] = pd.to_numeric(df.get("LineCurrent", 0.0), errors="coerce").fillna(0.0)
-    df["LineTemperature_val"] = pd.to_numeric(
-        df.get("LineTemperature", 0.0), errors="coerce"
-    ).fillna(0.0)
+    # --- LINE CURRENT & TEMPERATURE (ZM1 does NOT measure these) ---
+    # Set to 0 and NO flags
+    df["LineCurrent_val"] = 0.0  # <-- FIXED INDENTATION
+    df["LineTemperature_val"] = 0.0
     
-    # CAP VALUES
-    df["LineCurrent_val"] = df["LineCurrent_val"].clip(upper=1000)
-    df["LineTemperature_val"] = df["LineTemperature_val"].clip(upper=100)
+    # NO current flags for ZM1
+    df["zero_current_flag"] = 0
+    df["low_current_flag"] = 0
+    df["high_current_flag"] = 0
+    df["critical_current_flag"] = 0
+    
+    # NO temperature flags for ZM1
+    df["overheat_flag"] = 0
 
-    # Flags
-    limits = CURRENT_LIMITS_A["ZM1"]
-    df["zero_current_flag"] = (df["LineCurrent_val"] == 0.0).astype(int)
-    df["low_current_flag"] = ((df["LineCurrent_val"] > 0) & 
-                              (df["LineCurrent_val"] < limits["min_normal"])).astype(int)
-    df["high_current_flag"] = (df["LineCurrent_val"] > limits["warning_threshold"]).astype(int)
-    df["critical_current_flag"] = (df["LineCurrent_val"] > limits["critical_threshold"]).astype(int)
-    df["overheat_flag"] = (df["LineTemperature_val"] > TEMP_LIMITS_C["ZM1"]).astype(int)  # 70°C
-
-    # 1. Calculate device age in months (for new features)
+    # Calculate device age in months (for new features)
     # Note: device_age_days comes from add_install_age_features()
     if "device_age_days" in df.columns:
         df["device_age_months"] = df["device_age_days"] / 30.44  # Convert days to months
         df["device_age_months"] = df["device_age_months"].fillna(0)
     else:
         df["device_age_months"] = 0.0
-    # 2. Calculate battery drain rate (simplified: % per year)
+        
+    # Calculate battery drain rate (simplified: % per year)
     # Assuming battery starts at 100% and declines linearly over expected life
     if "expected_lifetime_days" in df.columns:
         df["battery_drain_rate"] = (100.0 / (df["expected_lifetime_days"] / 365.0))  # % per year
     else:
         df["battery_drain_rate"] = 10.0  # Default: 10% per year for 10-year life
+        
+    df["temperature_exceedence_count"] = 0  # ZM1 doesn't measure temp
     
-    # 3. Temperature exceedence count (placeholder - need historical data)
-    # For now, use current overheat flag as proxy
-    df["temperature_exceedence_count"] = df["overheat_flag"]  # Will be 0 or 1
-    
-    # 4. AGE ADJUSTED BATTERY RISK = battery_drain_rate × (device_age_months/24)
+    # AGE ADJUSTED BATTERY RISK = battery_drain_rate × (device_age_months/24)
     df["age_adjusted_battery_risk"] = df["battery_drain_rate"] * (df["device_age_months"] / 24.0)
     df["age_adjusted_battery_risk"] = df["age_adjusted_battery_risk"].fillna(0).clip(upper=100)
+    df["old_and_hot_flag"] = 0
     
-    # 5. OLD AND HOT FLAG = 1 if device_age_months > 48 AND temperature_exceedence_count > 2
-    # Since we only have current temp, using overheat_flag > 0 as proxy for "has had issues"
-    df["old_and_hot_flag"] = ((df["device_age_months"] > 48) & 
-                              (df["overheat_flag"] == 1)).astype(int)
-    
-    # 6. MAINTENANCE URGENCY SCORE = (device_age_months/60)*0.3 + battery_drain_rate*0.4 + temperature_exceedence_count*0.3
-    # Normalize components first
-    # 6. MAINTENANCE URGENCY SCORE = (device_age_months/60)*0.3 + battery_drain_rate*0.4 + temperature_exceedence_count*0.3
-    # Normalize components
+    # Maintenance urgency (age + battery only, no temperature)
     age_component = (df["device_age_months"] / 60.0).fillna(0).clip(upper=1.0)
     battery_component = (df["battery_drain_rate"] / 20.0).clip(upper=1.0)  # Max 20%/year
-    temp_component = df["temperature_exceedence_count"].fillna(0).clip(upper=1)
+    temp_component = 0
     
     df["maintenance_urgency_score"] = (
-        age_component * 0.3 + 
-        battery_component * 0.4 + 
-        temp_component * 0.3
+        age_component * 0.4 +  # Increased weight for age
+        battery_component * 0.6  # Increased weight for battery
     )
     df["maintenance_urgency_score"] = df["maintenance_urgency_score"].clip(upper=1.0).round(3)
+    
     # Risk formula (ZM1)
+   # Reduce weights for communication and battery report age
+        # Risk formula (ZM1) - with adjusted weights
     risk = (
-        0.20 * normalize(df["comm_age_days"], cap=365) +           # Reduced from 0.25
-        0.20 * normalize(df["battery_report_age_days"], cap=180) + # Reduced from 0.25
-        0.10 * normalize(df["LineTemperature_val"], cap=100) +     # Reduced from 0.15
-        0.05 * normalize(df["zero_current_flag"]) +
-        0.15 * normalize(df["pct_life_used"], cap=1.0) +           # Reduced from 0.20
-        0.10 * normalize(df["high_current_flag"] + df["critical_current_flag"]) +
-        0.10 * normalize(df["age_adjusted_battery_risk"], cap=100) +  # NEW
-        0.10 * normalize(df["maintenance_urgency_score"], cap=1.0)    # NEW
+        0.20 * normalize(df["comm_age_days"], cap=365) +           # Reduced from 0.30
+        0.20 * normalize(df["battery_report_age_days"], cap=180) + # Reduced from 0.30
+        0.25 * normalize(df["pct_life_used"], cap=1.0) +           # Increased from 0.20
+        0.20 * normalize(df["age_adjusted_battery_risk"], cap=100) + # Increased from 0.10
+        0.15 * normalize(df["maintenance_urgency_score"], cap=1.0)  # Increased from 0.10
     ) * 100.0
 
-    # Enhanced penalties including new features
-    risk += 20.0 * df["battery_low_flag"]
-    risk += 10.0 * df["overheat_flag"]
-    risk += 15.0 * df["critical_current_flag"]
-    risk += 10.0 * df["high_current_flag"]
-    risk += 5.0 * df["low_current_flag"]
-    risk += 25.0 * df["old_and_hot_flag"]  # NEW: High penalty for old & hot devices
-    risk += np.where(df["pct_life_used"] > 0.9, 15.0, 0.0)  # 90%+ life used
+    # --- Penalties with missing data checks ---
+    # Battery low penalty
+    risk += 20.0 * df["battery_low_flag"]  # Reduced from 30.0
     
+    # Old device penalty
+    risk += np.where(df["pct_life_used"] > 0.9, 15.0, 0.0)  # Reduced from 20.0
+    
+    # Stale battery report penalty
+    risk += np.where(df["battery_report_age_days"] > 90, 10.0, 0.0)  # Reduced from 15.0
+    
+    # --- Missing data penalties (NEW) ---
+    # Check for missing Last_Heard date
+    if "Last_Heard_dt" in df.columns:
+        risk += np.where(df["Last_Heard_dt"].isna(), 25.0, 0.0)
+    
+    # Check for missing InstallDate (unknown age)
+    if "InstallDate_dt" in df.columns:
+        risk += np.where(df["InstallDate_dt"].isna(), 20.0, 0.0)
+    
+    # Check for missing battery data (critical for ZM1)
+    if "BatteryLevel" in df.columns:
+        risk += np.where(df["BatteryLevel"].isna(), 15.0, 0.0)
+    
+    # --- Apply clamp and assign to DataFrame ---
     df["risk_score_zm1"] = risk.apply(clamp)
+    
     return df
-
 
 def compute_um3_features(df: pd.DataFrame) -> pd.DataFrame:
     """
@@ -378,46 +382,30 @@ def compute_um3_features(df: pd.DataFrame) -> pd.DataFrame:
       - risk_score_um3
     """
     df = df.copy()
+# --- UM3 measures NOTHING except communication ---
+    df["LineCurrent_val"] = 0.0
+    df["LineTemperature_val"] = 0.0
+    df["zero_current_flag"] = 0
+    df["low_current_flag"] = 0
+    df["high_current_flag"] = 0
+    df["critical_current_flag"] = 0
+    df["overheat_flag"] = 0
+    df["battery_level"] = 0.0
+    df["battery_low_flag"] = 0
 
-    # Line current & temperature - CAP THESE VALUES
-    df["LineCurrent_val"] = pd.to_numeric(df.get("LineCurrent", 0.0), errors="coerce").fillna(0.0)
-    df["LineTemperature_val"] = pd.to_numeric(
-        df.get("LineTemperature", 0.0), errors="coerce"
-    ).fillna(0.0)
     
-    # CAP VALUES
-    df["LineCurrent_val"] = df["LineCurrent_val"].clip(upper=1000)
-    df["LineTemperature_val"] = df["LineTemperature_val"].clip(upper=100)
-
-    # Current risk flags for UM3
-    limits = CURRENT_LIMITS_A["UM3"]
-    
-    df["zero_current_flag"] = (df["LineCurrent_val"] == 0.0).astype(int)
-    df["low_current_flag"] = ((df["LineCurrent_val"] > 0) & 
-                              (df["LineCurrent_val"] < limits["min_normal"])).astype(int)
-    df["high_current_flag"] = (df["LineCurrent_val"] > limits["warning_threshold"]).astype(int)
-    df["critical_current_flag"] = (df["LineCurrent_val"] > limits["critical_threshold"]).astype(int)
-    df["overheat_flag"] = (df["LineTemperature_val"] > TEMP_LIMITS_C["UM3"]).astype(int)  # 85°C
-
-    # UM3 Risk Formula (with current magnitude)
+    # --- UM3 Risk Formula (Communication + Age only) ---
     risk = (
-        0.3 * normalize(df["comm_age_days"], cap=365) +
-        0.25 * normalize(df["LineTemperature_val"], cap=100) +
-        0.05 * normalize(df["zero_current_flag"]) +
-        0.2 * normalize(df["pct_life_used"], cap=1.0) +
-        0.2 * normalize(df["high_current_flag"] + df["critical_current_flag"])
+        0.60 * normalize(df["comm_age_days"], cap=365) +   # Communication (60%)
+        0.40 * normalize(df["pct_life_used"], cap=1.0)     # Device age (40%)
     ) * 100.0
 
-    # Enhanced penalties
-    risk += 10.0 * df["overheat_flag"]
-    risk += 15.0 * df["critical_current_flag"]
-    risk += 10.0 * df["high_current_flag"]
-    risk += 5.0 * df["low_current_flag"]
-    risk += np.where(df["pct_life_used"] > 0.9, 15.0, 0.0)
+    # --- Penalties ---
+    risk += np.where(df["pct_life_used"] > 0.9, 40.0, 0.0)  # Very old devices
+    risk += np.where(df["comm_age_days"] > 30, 50.0, 0.0)   # Very long comm gap
 
     df["risk_score_um3"] = risk.apply(clamp)
     return df
-
 
 def compute_mm3_features(df: pd.DataFrame) -> pd.DataFrame:
     """
@@ -474,9 +462,16 @@ def compute_mm3_features(df: pd.DataFrame) -> pd.DataFrame:
 
 def explain_risk(row):
     reasons = []
+    device_type = str(row.get("Device_Type", "")).upper()
 
-    if pd.isna(row.get("pct_life_used", None)):
-        reasons.append("Unknown device age (install date missing)")
+    # --- CRITICAL: Missing data checks ---
+    # Check if Last_Heard is missing
+    if pd.isna(row.get("Last_Heard_dt")) or pd.isna(row.get("Last_Heard")):
+        reasons.append("Missing Last_Heard date")
+    
+    # Check if InstallDate is missing (affects device age)
+    if pd.isna(row.get("InstallDate_dt")) and pd.isna(row.get("pct_life_used", None)):
+        reasons.append("Missing installation date")
     
     # --- Communication gap ---
     if pd.notna(row.get("comm_age_days", None)):
@@ -485,62 +480,66 @@ def explain_risk(row):
             reasons.append(f"Long communication gap ({comm_age:.1f} days)")
         elif comm_age > 7:
             reasons.append(f"Moderate communication delay ({comm_age:.1f} days)")
+    elif "Missing Last_Heard date" not in reasons:  # Only add if not already mentioned
+        reasons.append("Cannot calculate communication gap")
     
-    # --- Zero current ---
-    if row.get("zero_current_flag", 0) == 1:
-        reasons.append("Zero current detected")
-
-    # --- Overheat ---
-    if row.get("overheat_flag", 0) == 1:
-        reasons.append("Over temperature condition")
-
-    # --- Current magnitude conditions ---
-    current = row.get("LineCurrent_val", 0.0)
-    device_type = str(row.get("Device_Type", ""))
-    
-    if device_type in CURRENT_LIMITS_A:
-        limits = CURRENT_LIMITS_A[device_type]
-        
-        if current > 0 and current < limits["min_normal"]:
-            reasons.append(f"Low current ({current:.1f}A)")
-        elif current > limits["warning_threshold"]:
-            reasons.append(f"High current ({current:.1f}A)")
-        elif current > limits["critical_threshold"]:
-            reasons.append(f"CRITICAL: Current above operating range ({current:.1f}A)")
-
     # --- Device age ---
-    if pd.notna(row.get("pct_life_used", None)):
+    if pd.isna(row.get("pct_life_used", None)):
+        if "Missing installation date" not in reasons:  # Only add if not already mentioned
+            reasons.append("Unknown device age (install date missing)")
+    else:
         if row["pct_life_used"] > 0.9:
             reasons.append("Device past 90% expected life")
         elif row["pct_life_used"] > 0.7:
             reasons.append("Device aging (70%+ life used)")
     
-    # --- ZM1-specific ---
-    if "ZM1" in str(row.get("Device_Type", "")):
+    # --- ZM1-specific (Battery only) ---
+    if "ZM1" in device_type:
+        # Check if battery data is missing
+        if pd.isna(row.get("BatteryLevel")) and pd.isna(row.get("battery_level", None)):
+            reasons.append("Missing battery data")
+        
         if row.get("battery_low_flag", 0) == 1:
             reasons.append("Battery critically low")
-        if row.get("battery_report_age_days", 0) > 180:
+        
+        if pd.isna(row.get("battery_report_age_days", None)):
+            reasons.append("Missing battery report date")
+        elif row.get("battery_report_age_days", 0) > 180:
             reasons.append("Battery report outdated")
-
-    # --- UM3-specific ---
-    if "UM3" in str(row.get("Device_Type", "")):
-        if row.get("overheat_flag", 0) == 1:
-            reasons.append("High underground temperature")
-
-    # --- MM3-specific ---
-    if "MM3" in str(row.get("Device_Type", "")):
-        if row.get("zero_current_flag", 0) == 1:
-            reasons.append("Zero current (possible feeder fault)")
-        if row.get("overheat_flag", 0) == 1:
-            reasons.append("Line temperature exceeds MM3 threshold")
-
+    
+    # --- UM3-specific (Communication only) ---
+    elif "UM3" in device_type:
+        # UM3 measures nothing except communication
+        pass
+    
+    # --- MM3-specific (Current AND Temperature) ---
+    elif "MM3" in device_type:
+        # Check if current data is missing
+        if pd.isna(row.get("LineCurrent_val", None)):
+            reasons.append("Missing current data")
+        else:
+            current = row.get("LineCurrent_val", 0.0)
+            if current == 0:
+                reasons.append("Zero current detected")
+            elif current > 0:
+                if current < 1.0:
+                    reasons.append(f"Low current ({current:.1f}A)")
+                elif current > 700.0:
+                    reasons.append(f"High current ({current:.1f}A)")
+                elif current > 850.0:
+                    reasons.append(f"CRITICAL: Current above operating range ({current:.1f}A)")
+        
+        # Check if temperature data is missing
+        if pd.isna(row.get("LineTemperature_val", None)):
+            reasons.append("Missing temperature data")
+        elif row.get("overheat_flag", 0) == 1:
+            reasons.append("Over temperature condition")
+    
     # No issues
     if not reasons:
         return "Normal operating conditions"
 
     return ", ".join(reasons)
-
-
 # ====================================================
 # Main Router
 # ====================================================
