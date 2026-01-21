@@ -4,6 +4,10 @@ import numpy as np
 from pathlib import Path
 import sys
 import os
+import re
+import zipfile  # ADD THIS FOR ZIP SUPPORT
+import tempfile
+import shutil
 
 # Add project root to path to import feature_health
 project_root = Path(__file__).parent.parent
@@ -16,9 +20,85 @@ except ImportError as e:
     print(f"❌ Failed to import health_features: {e}")
     sys.exit(1)
 
+def extract_zip_files(raw_dir):
+    """
+    Extract CSV and Excel files from ZIP archives in the raw directory.
+    Returns number of files extracted.
+    """
+    zip_files = list(raw_dir.glob("*.zip"))
+    if not zip_files:
+        return 0
+    
+    print(f"\n📦 Found {len(zip_files)} ZIP file(s):")
+    for zf in zip_files:
+        print(f"   • {zf.name}")
+    
+    extracted_count = 0
+    
+    for zip_file in zip_files:
+        print(f"\n   📦 Extracting: {zip_file.name}")
+        try:
+            with zipfile.ZipFile(zip_file, 'r') as zf:
+                # Get list of files in ZIP
+                file_list = zf.namelist()
+                csv_excel_files = [f for f in file_list if f.lower().endswith(('.csv', '.xlsx', '.xls'))]
+                
+                if not csv_excel_files:
+                    print(f"      No CSV or Excel files found in {zip_file.name}")
+                    continue
+                
+                print(f"      Contains {len(csv_excel_files)} CSV/Excel file(s)")
+                
+                # Extract each CSV/Excel file
+                for file_in_zip in csv_excel_files:
+                    # Skip directories
+                    if file_in_zip.endswith('/'):
+                        continue
+                    
+                    # Get the filename without path
+                    filename = Path(file_in_zip).name
+                    
+                    # Check if file already exists
+                    target_file = raw_dir / filename
+                    
+                    # Handle duplicates by adding _1, _2, etc.
+                    counter = 1
+                    original_stem = Path(filename).stem
+                    original_suffix = Path(filename).suffix
+                    
+                    while target_file.exists():
+                        filename = f"{original_stem}_{counter}{original_suffix}"
+                        target_file = raw_dir / filename
+                        counter += 1
+                    
+                    # Extract the file
+                    zf.extract(file_in_zip, raw_dir)
+                    
+                    # If extracted to subdirectory, move it
+                    extracted_path = raw_dir / file_in_zip
+                    if extracted_path != target_file:
+                        if extracted_path.exists():
+                            extracted_path.rename(target_file)
+                            # Clean up empty directories
+                            try:
+                                extracted_path.parent.rmdir()
+                            except:
+                                pass
+                    
+                    print(f"      ✓ Extracted: {filename}")
+                    extracted_count += 1
+                
+                print(f"   ✅ Successfully extracted {len(csv_excel_files)} files from {zip_file.name}")
+                
+        except Exception as e:
+            print(f"      ❌ Error extracting {zip_file.name}: {str(e)[:100]}")
+    
+    return extracted_count
+
 def process_daily_time_series():
     """
     Pipeline to process daily ZM1 data into a time series dataset.
+    Supports: CSV, Excel (.xlsx, .xls), and ZIP files containing CSV/Excel.
     """
     print("=" * 70)
     print("DAILY TIME SERIES PROCESSING PIPELINE - ZM1 ONLY")
@@ -34,7 +114,20 @@ def process_daily_time_series():
     for directory in [CLEAN_DAILY_DIR, TIME_SERIES_DIR, PROCESSED_TS_DIR]:
         directory.mkdir(parents=True, exist_ok=True)
     
-    # Load install dates
+    # STEP 1: Extract any ZIP files first
+    print("\n" + "=" * 50)
+    print("STEP 1: CHECKING FOR ZIP FILES")
+    print("=" * 50)
+    
+    extracted_count = extract_zip_files(RAW_DAILY_DIR)
+    if extracted_count > 0:
+        print(f"\n✅ Extracted {extracted_count} files from ZIP archives")
+    
+    # STEP 2: Load install dates
+    print("\n" + "=" * 50)
+    print("STEP 2: LOADING INSTALLATION DATA")
+    print("=" * 50)
+    
     install_file = project_root / "data" / "clean" / "install_dates.csv"
     if install_file.exists():
         install_df = pd.read_csv(install_file)
@@ -43,34 +136,84 @@ def process_daily_time_series():
         install_df = None
         print("⚠️  No install dates file found - device age features will be limited")
     
-    # Get all daily files
-    excel_files = sorted(RAW_DAILY_DIR.glob("*.xlsx"))
+    # STEP 3: Find all CSV and Excel files
+    print("\n" + "=" * 50)
+    print("STEP 3: FINDING DATA FILES")
+    print("=" * 50)
+    
+    print(f"📁 Looking for files in: {RAW_DAILY_DIR}")
+    
+    # Get all CSV and Excel files (including those extracted from ZIPs)
+    excel_files = sorted(RAW_DAILY_DIR.glob("*.xlsx")) + sorted(RAW_DAILY_DIR.glob("*.xls"))
     csv_files = sorted(RAW_DAILY_DIR.glob("*.csv"))
     daily_files = list(excel_files) + list(csv_files)
-
-    print(f"📁 Found {len(daily_files)} daily files in {RAW_DAILY_DIR}")
-    print(f"   Excel files: {len(excel_files)}, CSV files: {len(csv_files)}")
-    if not daily_files:
-        print("❌ No daily files found!")
-        print(f"   Expected path: {RAW_DAILY_DIR}")
+    
+    print(f"📁 Found {len(daily_files)} data files ready for processing")
+    print(f"   Excel files: {len(excel_files)} (.xlsx/.xls)")
+    print(f"   CSV files: {len(csv_files)}")
+    
+    # Show what files were found
+    if daily_files:
+        print("\n   Files to process:")
+        for f in daily_files[:15]:  # Show first 15 files
+            print(f"   • {f.name}")
+        if len(daily_files) > 15:
+            print(f"   ... and {len(daily_files) - 15} more")
+    else:
+        print("❌ No data files found!")
+        print(f"   Check path: {RAW_DAILY_DIR}")
+        print(f"   Supported formats: .csv, .xlsx, .xls, or .zip containing these formats")
         return
+    
+    # STEP 4: Process each file
+    print("\n" + "=" * 50)
+    print("STEP 4: PROCESSING FILES")
+    print("=" * 50)
     
     all_daily_data = []
     processing_stats = []
     
-    # Process each daily file
     for i, daily_file in enumerate(daily_files):
         print(f"\n[{i+1}/{len(daily_files)}] Processing: {daily_file.name}")
         
         try:
-            # Load daily data (support both Excel and CSV)
-            if daily_file.suffix.lower() == '.xlsx':
+            # Load data based on file type
+            if daily_file.suffix.lower() in ['.xlsx', '.xls']:
                 df_daily = pd.read_excel(daily_file)
+                print(f"   📊 Loaded Excel file: {len(df_daily)} rows")
             else:  # .csv
                 df_daily = pd.read_csv(daily_file)
+                print(f"   📊 Loaded CSV file: {len(df_daily)} rows")
             
-            # Extract date from filename (e.g., "2024-01-15" from "2024-01-15.csv")
-            date_from_filename = daily_file.stem
+            # Extract date from filename using regex
+            date_match = re.search(r'(\d{4}-\d{2}-\d{2})', daily_file.stem)
+            if date_match:
+                date_from_filename = date_match.group(1)
+                print(f"   📅 Extracted date: {date_from_filename}")
+            else:
+                # Fallback: use entire filename stem
+                date_from_filename = daily_file.stem
+                print(f"   ⚠️  Could not extract date from filename, using: {date_from_filename}")
+            
+            # Check if output already exists, skip if it does
+            output_file = CLEAN_DAILY_DIR / f"{date_from_filename}_health_zm1only.csv"
+            if output_file.exists():
+                print(f"   ⏭️  Skipping {daily_file.name} - output already exists")
+                
+                # Still record stats for skipped file
+                processing_stats.append({
+                    'date': date_from_filename,
+                    'file': daily_file.name,
+                    'total_rows': len(df_daily),
+                    'zm1_rows': 0,
+                    'other_rows': 0,
+                    'zm1_percentage': 0,
+                    'health_features': 0,
+                    'processed': False,
+                    'output_file': output_file.name,
+                    'skip_reason': 'output_already_exists'
+                })
+                continue
             
             # Check if we have Device_Type column
             if 'Device_Type' not in df_daily.columns:
@@ -94,6 +237,18 @@ def process_daily_time_series():
             
             if len(df_zm1) == 0:
                 print(f"   ⚠️  No ZM1 devices found in this file - skipping")
+                processing_stats.append({
+                    'date': date_from_filename,
+                    'file': daily_file.name,
+                    'total_rows': len(df_daily),
+                    'zm1_rows': 0,
+                    'other_rows': len(df_daily),
+                    'zm1_percentage': 0,
+                    'health_features': 0,
+                    'processed': False,
+                    'output_file': None,
+                    'skip_reason': 'no_zm1_devices'
+                })
                 continue
             
             print(f"   🔋 Filtered to {len(df_zm1)} ZM1 devices ({(len(df_zm1)/len(df_daily))*100:.1f}% of total)")
@@ -111,8 +266,7 @@ def process_daily_time_series():
             if 'date' not in df_health.columns:
                 df_health['date'] = date_from_filename
             
-            # Save cleaned daily file with proper naming convention
-            # Format: YYYY-MM-DD_health_zm1only.csv
+            # Save cleaned daily file
             clean_file = CLEAN_DAILY_DIR / f"{date_from_filename}_health_zm1only.csv"
             df_health.to_csv(clean_file, index=False)
             
@@ -137,6 +291,8 @@ def process_daily_time_series():
             
         except Exception as e:
             print(f"   ❌ Error processing {daily_file.name}: {str(e)[:100]}...")
+            import traceback
+            traceback.print_exc()
             processing_stats.append({
                 'date': daily_file.stem if daily_file else 'unknown',
                 'file': daily_file.name,
@@ -150,18 +306,18 @@ def process_daily_time_series():
                 'error': str(e)[:200]
             })
     
-    # Create combined time series
+    # STEP 5: Create combined time series
+    print("\n" + "=" * 50)
+    print("STEP 5: CREATING TIME SERIES")
+    print("=" * 50)
+    
     if all_daily_data:
-        print("\n" + "=" * 70)
-        print("CREATING ZM1-ONLY TIME SERIES")
-        print("=" * 70)
-        
         time_series_df = pd.concat(all_daily_data, ignore_index=True)
         
         # Sort by device and date
         time_series_df = time_series_df.sort_values(['Serial', 'date'])
         
-        # Save raw combined time series (in clean/time_series/)
+        # Save raw combined time series
         raw_ts_file = TIME_SERIES_DIR / "zm1_daily_time_series.csv"
         time_series_df.to_csv(raw_ts_file, index=False)
         
@@ -177,12 +333,12 @@ def process_daily_time_series():
         enhanced_ts_file = PROCESSED_TS_DIR / f"{min_date}_to_{max_date}_health_zm1only_timeseries.csv"
         time_series_df.to_csv(enhanced_ts_file, index=False)
         
-        # Save statistics (in clean/time_series/)
+        # Save statistics
         stats_df = pd.DataFrame(processing_stats)
         stats_file = TIME_SERIES_DIR / "daily_processing_stats.csv"
         stats_df.to_csv(stats_file, index=False)
         
-        print(f"\n🎉 ZM1-ONLY PIPELINE COMPLETE!")
+        print(f"\n🎉 PIPELINE COMPLETE!")
         print(f"✅ Raw ZM1 time series: {raw_ts_file} ({len(time_series_df):,} records)")
         print(f"✅ Enhanced ZM1 time series: {enhanced_ts_file}")
         print(f"✅ Processing stats: {stats_file}")
@@ -192,23 +348,29 @@ def process_daily_time_series():
         print(f"   Unique ZM1 devices: {time_series_df['Serial'].nunique()}")
         print(f"   Date range: {min_date} to {max_date}")
         print(f"   Total days processed: {time_series_df['date'].nunique()}")
-        print(f"   Successfully processed: {sum(stats_df['processed'])}/{len(stats_df)} days")
         
-        # Show output file naming
-        print(f"\n📁 OUTPUT FILE NAMES (clean/daily/):")
-        processed_files = stats_df[stats_df['processed'] == True]
-        for _, row in processed_files.iterrows():
-            print(f"   {row['output_file']}")
+        # Show processing results
+        processed_count = sum(1 for s in processing_stats if s.get('processed') == True)
+        skipped_count = sum(1 for s in processing_stats if s.get('processed') == False)
+        print(f"   Successfully processed: {processed_count}/{len(processing_stats)} days")
+        print(f"   Skipped: {skipped_count} days")
+        
+        # Show output files
+        print(f"\n📁 OUTPUT FILES CREATED:")
+        print(f"   Clean daily files: {processed_count} files in {CLEAN_DAILY_DIR}")
+        print(f"   Time series: {enhanced_ts_file.name}")
         
         # Show overall ZM1 statistics
         if len(processing_stats) > 0:
-            total_raw = sum([s['total_rows'] for s in processing_stats if s['processed']])
-            total_zm1 = sum([s['zm1_rows'] for s in processing_stats if s['processed']])
-            avg_percentage = np.mean([s['zm1_percentage'] for s in processing_stats if s['processed']])
-            print(f"\n📈 ZM1 EXTRACTION STATS:")
-            print(f"   Total raw devices processed: {total_raw:,}")
-            print(f"   Total ZM1 devices extracted: {total_zm1:,}")
-            print(f"   Average ZM1 percentage: {avg_percentage:.1f}%")
+            total_raw = sum([s['total_rows'] for s in processing_stats if s.get('processed') == True])
+            total_zm1 = sum([s['zm1_rows'] for s in processing_stats if s.get('processed') == True])
+            percentages = [s['zm1_percentage'] for s in processing_stats if s.get('processed') == True]
+            if percentages:
+                avg_percentage = np.mean(percentages)
+                print(f"\n📈 ZM1 EXTRACTION STATS:")
+                print(f"   Total raw devices processed: {total_raw:,}")
+                print(f"   Total ZM1 devices extracted: {total_zm1:,}")
+                print(f"   Average ZM1 percentage: {avg_percentage:.1f}%")
         
     else:
         print("\n❌ No ZM1 data was processed!")
@@ -222,17 +384,23 @@ def add_time_based_features(df):
     df = df.sort_values(['Serial', 'date'])
     
     # Calculate daily changes
-    df['battery_change_1d'] = df.groupby('Serial')['battery_level'].diff()
-    df['temp_change_1d'] = df.groupby('Serial')['LineTemperature_val'].diff()
+    if 'battery_level' in df.columns:
+        df['battery_change_1d'] = df.groupby('Serial')['battery_level'].diff()
+    
+    if 'LineTemperature_val' in df.columns:
+        df['temp_change_1d'] = df.groupby('Serial')['LineTemperature_val'].diff()
     
     # Rolling averages (3, 7, 14 days)
     for window in [3, 7, 14]:
-        df[f'battery_avg_{window}d'] = df.groupby('Serial')['battery_level'].transform(
-            lambda x: x.rolling(window=window, min_periods=1).mean()
-        )
-        df[f'temp_avg_{window}d'] = df.groupby('Serial')['LineTemperature_val'].transform(
-            lambda x: x.rolling(window=window, min_periods=1).mean()
-        )
+        if 'battery_level' in df.columns:
+            df[f'battery_avg_{window}d'] = df.groupby('Serial')['battery_level'].transform(
+                lambda x: x.rolling(window=window, min_periods=1).mean()
+            )
+        
+        if 'LineTemperature_val' in df.columns:
+            df[f'temp_avg_{window}d'] = df.groupby('Serial')['LineTemperature_val'].transform(
+                lambda x: x.rolling(window=window, min_periods=1).mean()
+            )
     
     # Days since last event flags
     for flag in ['overheat_flag', 'zero_current_flag', 'battery_low_flag']:
