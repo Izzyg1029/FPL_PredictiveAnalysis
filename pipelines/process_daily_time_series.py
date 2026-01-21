@@ -95,6 +95,136 @@ def extract_zip_files(raw_dir):
     
     return extracted_count
 
+def create_device_profiles(time_series_df):
+    """
+    Create a device summary file with aggregated time series data.
+    One row per device with historical trends and statistics.
+    """
+    print("\n" + "=" * 50)
+    print("CREATING DEVICE PROFILES")
+    print("=" * 50)
+    
+    # Ensure we have the time series data
+    if len(time_series_df) == 0:
+        print("❌ No time series data available for device profiles")
+        return None
+    
+    device_profiles = []
+    
+    # Group by device
+    for serial, device_data in time_series_df.groupby('Serial'):
+        # Sort by date (most recent first)
+        device_data = device_data.sort_values('date', ascending=False)
+        
+        # Basic device info
+        profile = {
+            'Serial': serial,
+            'Device_Type': device_data['Device_Type'].iloc[0] if 'Device_Type' in device_data.columns else 'Unknown',
+            'first_seen_date': device_data['date'].min(),
+            'last_seen_date': device_data['date'].max(),
+            'total_days_observed': device_data['date'].nunique(),
+            'total_records': len(device_data)
+        }
+        
+        # If install date exists
+        if 'install_date' in device_data.columns:
+            profile['install_date'] = device_data['install_date'].iloc[0]
+            profile['device_age_days'] = device_data['device_age_days'].iloc[0] if 'device_age_days' in device_data.columns else None
+        
+        # === BATTERY ANALYSIS (for ZM1) ===
+        if 'battery_level' in device_data.columns:
+            battery_data = device_data['battery_level'].dropna()
+            if len(battery_data) > 0:
+                profile['battery_current'] = battery_data.iloc[0]  # Most recent
+                profile['battery_min'] = battery_data.min()
+                profile['battery_max'] = battery_data.max()
+                profile['battery_avg'] = battery_data.mean()
+                profile['battery_std'] = battery_data.std()
+                
+                # Battery trends
+                if len(battery_data) >= 2:
+                    # GET DATES THAT MATCH THE BATTERY DATA
+                    battery_indices = battery_data.index
+                    battery_dates = pd.to_datetime(device_data.loc[battery_indices, 'date'])
+                    
+                    # Now create the Series with matching lengths
+                    battery_series = pd.Series(battery_data.values, index=battery_dates)
+                    
+                    # Calculate battery drain rate (% per day)
+                    profile['battery_drain_rate_per_day'] = -battery_series.diff().mean()  # Negative = draining
+                    
+                    # Days until battery < 20% (if draining)
+                    if profile['battery_drain_rate_per_day'] > 0:
+                        days_to_20 = (profile['battery_current'] - 20) / profile['battery_drain_rate_per_day']
+                        profile['days_until_battery_critical'] = max(0, days_to_20)
+                    else:
+                        profile['days_until_battery_critical'] = float('inf')
+                
+                # Battery risk flags over time
+                if 'battery_low_flag' in device_data.columns:
+                    profile['battery_low_days_count'] = device_data['battery_low_flag'].sum()
+                    profile['battery_low_percentage'] = (profile['battery_low_days_count'] / len(device_data)) * 100
+        
+        # === COMMUNICATION ANALYSIS ===
+        if 'hours_since_last_heard' in device_data.columns:
+            comm_data = device_data['hours_since_last_heard'].dropna()
+            if len(comm_data) > 0:
+                profile['comms_gap_current_hours'] = comm_data.iloc[0]
+                profile['comms_gap_avg_hours'] = comm_data.mean()
+                profile['comms_gap_max_hours'] = comm_data.max()
+        
+        # === RISK SCORE ANALYSIS ===
+        if 'risk_score' in device_data.columns:
+            risk_data = device_data['risk_score'].dropna()
+            if len(risk_data) > 0:
+                profile['risk_score_current'] = risk_data.iloc[0]
+                profile['risk_score_avg'] = risk_data.mean()
+                profile['risk_score_max'] = risk_data.max()
+                profile['risk_score_min'] = risk_data.min()
+                profile['risk_score_std'] = risk_data.std()
+        
+        # === OVERHEAT ANALYSIS (if applicable) ===
+        if 'overheat_flag' in device_data.columns:
+            profile['overheat_events_count'] = device_data['overheat_flag'].sum()
+        
+        # === CURRENT ANALYSIS (if applicable) ===
+        if 'LineCurrent_val' in device_data.columns and device_data['LineCurrent_val'].sum() > 0:
+            current_data = device_data['LineCurrent_val'].dropna()
+            if len(current_data) > 0:
+                profile['current_avg'] = current_data.mean()
+                profile['current_max'] = current_data.max()
+        
+        device_profiles.append(profile)
+    
+    # Convert to DataFrame
+    profiles_df = pd.DataFrame(device_profiles)
+    
+    # Add device health status
+    def get_health_status(row):
+        risk = row.get('risk_score_current', 0)
+        battery = row.get('battery_current', 100)
+        
+        if risk > 80 or battery < 10:
+            return 'CRITICAL'
+        elif risk > 60 or battery < 30:
+            return 'POOR'
+        elif risk > 40 or battery < 60:
+            return 'FAIR'
+        elif risk > 20 or battery < 80:
+            return 'GOOD'
+        else:
+            return 'EXCELLENT'
+    
+    if 'risk_score_current' in profiles_df.columns:
+        profiles_df['device_health_status'] = profiles_df.apply(get_health_status, axis=1)
+    
+    # Sort by risk (highest first)
+    if 'risk_score_current' in profiles_df.columns:
+        profiles_df = profiles_df.sort_values('risk_score_current', ascending=False)
+    
+    return profiles_df
+
+
 def process_daily_time_series():
     """
     Pipeline to process daily ZM1 data into a time series dataset.
@@ -252,11 +382,19 @@ def process_daily_time_series():
                 continue
             
             print(f"   🔋 Filtered to {len(df_zm1)} ZM1 devices ({(len(df_zm1)/len(df_daily))*100:.1f}% of total)")
-            
-            # Add date column if not present
+             
+             # Add date column if not present
             if 'date' not in df_zm1.columns:
                 df_zm1['date'] = date_from_filename
                 df_zm1['timestamp'] = pd.to_datetime(date_from_filename)
+            
+             # DEDUPLICATION: Remove duplicate entries for same device/date
+            before_dedup = len(df_zm1)
+            df_zm1 = df_zm1.drop_duplicates(subset=['Serial', 'date'], keep='first')
+            duplicates_removed = before_dedup - len(df_zm1)
+            
+            if duplicates_removed > 0:
+                print(f"   🔍 Removed {duplicates_removed} duplicate entries (kept first per device/date)")
             
             # Build health features
             print(f"   ⚙️  Building health features...")
@@ -333,6 +471,37 @@ def process_daily_time_series():
         enhanced_ts_file = PROCESSED_TS_DIR / f"{min_date}_to_{max_date}_health_zm1only_timeseries.csv"
         time_series_df.to_csv(enhanced_ts_file, index=False)
         
+        # Create device profiles
+        print("\n" + "=" * 50)
+        print("STEP 6: CREATING DEVICE PROFILES")
+        print("=" * 50)
+
+        device_profiles = create_device_profiles(time_series_df)
+
+        if device_profiles is not None:
+            # Save device profiles
+            profiles_file = PROCESSED_TS_DIR / "device_profiles_summary.csv"
+            device_profiles.to_csv(profiles_file, index=False)
+            
+            print(f"✅ Device profiles: {profiles_file}")
+            print(f"   Devices summarized: {len(device_profiles):,}")
+            
+            # Show some statistics
+            print(f"\n📊 DEVICE HEALTH DISTRIBUTION:")
+            if 'device_health_status' in device_profiles.columns:
+                status_counts = device_profiles['device_health_status'].value_counts()
+                for status, count in status_counts.items():
+                    percentage = (count / len(device_profiles)) * 100
+                    print(f"   {status}: {count} devices ({percentage:.1f}%)")
+            
+            print(f"\n🔝 TOP 5 HIGH-RISK DEVICES:")
+            high_risk = device_profiles.head(5)
+            for _, device in high_risk.iterrows():
+                risk = device.get('risk_score_current', 0)
+                battery = device.get('battery_current', 'N/A')
+                status = device.get('device_health_status', 'Unknown')
+                print(f"   {device['Serial']}: Risk={risk:.1f}, Battery={battery}%, Status={status}")
+
         # Save statistics
         stats_df = pd.DataFrame(processing_stats)
         stats_file = TIME_SERIES_DIR / "daily_processing_stats.csv"
@@ -405,11 +574,11 @@ def add_time_based_features(df):
     # Days since last event flags
     for flag in ['overheat_flag', 'zero_current_flag', 'battery_low_flag']:
         if flag in df.columns:
-            df[f'days_since_{flag}'] = df.groupby('Serial').apply(
+            df[f'days_since_{flag}'] = df.groupby('Serial',group_keys=False).apply(
                 lambda grp: (pd.to_datetime(grp['date']) - 
                            pd.to_datetime(grp.loc[grp[flag] == 1, 'date']).max()).dt.days
                 if (grp[flag] == 1).any() else np.nan
-            ).reset_index(level=0, drop=True)
+            )
     
     return df
 
