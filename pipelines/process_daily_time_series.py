@@ -69,6 +69,7 @@ def process_daily_time_series():
             else:  # .csv
                 df_daily = pd.read_csv(daily_file)
             
+            # Extract date from filename (e.g., "2024-01-15" from "2024-01-15.csv")
             date_from_filename = daily_file.stem
             
             # Check if we have Device_Type column
@@ -110,8 +111,9 @@ def process_daily_time_series():
             if 'date' not in df_health.columns:
                 df_health['date'] = date_from_filename
             
-            # Save cleaned daily file with ZM1-only indicator
-            clean_file = CLEAN_DAILY_DIR / f"{daily_file.stem}-clean-zm1only.csv"  # CHANGED NAME
+            # Save cleaned daily file with proper naming convention
+            # Format: YYYY-MM-DD_health_zm1only.csv
+            clean_file = CLEAN_DAILY_DIR / f"{date_from_filename}_health_zm1only.csv"
             df_health.to_csv(clean_file, index=False)
             
             # Add to combined time series
@@ -126,7 +128,8 @@ def process_daily_time_series():
                 'other_rows': len(df_daily) - len(df_zm1),
                 'zm1_percentage': (len(df_zm1) / len(df_daily)) * 100,
                 'health_features': len(df_health.columns),
-                'processed': True
+                'processed': True,
+                'output_file': clean_file.name
             })
             
             print(f"   ✅ Saved ZM1-only file: {clean_file.name}")
@@ -143,6 +146,7 @@ def process_daily_time_series():
                 'zm1_percentage': 0,
                 'health_features': 0,
                 'processed': False,
+                'output_file': None,
                 'error': str(e)[:200]
             })
     
@@ -158,15 +162,19 @@ def process_daily_time_series():
         time_series_df = time_series_df.sort_values(['Serial', 'date'])
         
         # Save raw combined time series (in clean/time_series/)
-        raw_ts_file = TIME_SERIES_DIR / "zmi_daily_time_series.csv"
+        raw_ts_file = TIME_SERIES_DIR / "zm1_daily_time_series.csv"
         time_series_df.to_csv(raw_ts_file, index=False)
         
         # Add time-based features
         print("   ⏳ Adding time-based features...")
         time_series_df = add_time_based_features(time_series_df)
         
-        # Save enhanced time series (in processed/time_series/)
-        enhanced_ts_file = PROCESSED_TS_DIR / "zmi_daily_health_time_series.csv"
+        # Get date range for the combined file name
+        min_date = time_series_df['date'].min()
+        max_date = time_series_df['date'].max()
+        
+        # Save enhanced time series with date range in filename
+        enhanced_ts_file = PROCESSED_TS_DIR / f"{min_date}_to_{max_date}_health_zm1only_timeseries.csv"
         time_series_df.to_csv(enhanced_ts_file, index=False)
         
         # Save statistics (in clean/time_series/)
@@ -182,9 +190,15 @@ def process_daily_time_series():
         # Summary
         print(f"\n📊 ZM1-ONLY SUMMARY:")
         print(f"   Unique ZM1 devices: {time_series_df['Serial'].nunique()}")
-        print(f"   Date range: {time_series_df['date'].min()} to {time_series_df['date'].max()}")
+        print(f"   Date range: {min_date} to {max_date}")
         print(f"   Total days processed: {time_series_df['date'].nunique()}")
         print(f"   Successfully processed: {sum(stats_df['processed'])}/{len(stats_df)} days")
+        
+        # Show output file naming
+        print(f"\n📁 OUTPUT FILE NAMES (clean/daily/):")
+        processed_files = stats_df[stats_df['processed'] == True]
+        for _, row in processed_files.iterrows():
+            print(f"   {row['output_file']}")
         
         # Show overall ZM1 statistics
         if len(processing_stats) > 0:
