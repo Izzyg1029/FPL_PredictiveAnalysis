@@ -1,0 +1,6 @@
+health_status,device_count,percentage
+GOOD,1535,46.9
+CRITICAL,1066,32.6
+POOR,356,10.9
+EXCELLENT,203,6.2
+FAIR,110,3.4
