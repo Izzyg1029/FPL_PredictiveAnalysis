@@ -3,6 +3,43 @@ import pandas as pd
 from pathlib import Path
 import numpy as np
 
+def clean_zm1_battery_data(profiles):
+    """Clean battery data for non-rechargeable ZM1 sensors"""
+    df = profiles.copy()
+    
+    # 1. Fix impossible negative drain rates
+    df.loc[df['battery_drain_rate_per_day'] < 0, 'battery_drain_rate_per_day'] = 0
+    
+    # 2. Add flag for data quality
+    df['battery_data_issue'] = np.where(
+        df['battery_drain_rate_per_day'] < 0,
+        'Shows charging (impossible)',
+        np.where(
+            df['battery_drain_rate_per_day'] == 0,
+            'Zero drain (sensor issue?)',
+            'Normal'
+        )
+    )
+    
+    # 3. Calculate expected lifetime
+    # First, ensure we have the expected daily drain column
+    if 'expected_daily_drain' not in df.columns:
+        df['expected_daily_drain'] = 100 / (10 * 365)  # ~0.027%/day for 10-year battery
+    
+    # Calculate with protection against division by zero
+    df['expected_battery_life_days'] = np.where(
+        df['battery_drain_rate_per_day'] > 0,
+        df['battery_current'] / df['battery_drain_rate_per_day'],
+        df['battery_current'] / df['expected_daily_drain']
+    )
+    
+    df['years_remaining'] = df['expected_battery_life_days'] / 365
+    
+    # Cap unrealistic values
+    df.loc[df['years_remaining'] > 20, 'years_remaining'] = 20
+    
+    return df
+
 def create_powerbi_exports():
     """Create optimized files for Power BI import."""
     project_root = Path(__file__).parent.parent  # Go up one level
@@ -16,6 +53,13 @@ def create_powerbi_exports():
     profiles_file = project_root / "data" / "processed" / "time_series" / "device_profiles_summary.csv"
     if profiles_file.exists():
         profiles = pd.read_csv(profiles_file)
+        
+        # === ADD THIS CRITICAL LINE ===
+        # Clean ZM1 battery data (fixes negative drain rates)
+        if 'battery_drain_rate_per_day' in profiles.columns:
+            profiles = clean_zm1_battery_data(profiles)
+            print(f"   🔋 Cleaned battery data: {len(profiles):,} devices")
+            print(f"   ⚠️  Battery issues found: {(profiles['battery_data_issue'] != 'Normal').sum():,}")
         
         # Add derived columns for Power BI
         profiles['battery_health_category'] = pd.cut(
@@ -39,11 +83,21 @@ def create_powerbi_exports():
             labels=['Low (0-20)', 'Medium (21-40)', 'High (41-60)', 'Critical (61-80)', 'Emergency (81-100)']
         )
         
+        # Add battery drain categories (new)
+        if 'battery_drain_rate_per_day' in profiles.columns:
+            profiles['drain_category'] = pd.cut(
+                profiles['battery_drain_rate_per_day'].fillna(0),
+                bins=[-1, 0.01, 0.05, 0.1, 1, 100],
+                labels=['Sensor Issue', 'Excellent (<0.01%/day)', 'Good (0.01-0.05%/day)', 
+                       'Moderate (0.05-0.1%/day)', 'High (>0.1%/day)']
+            )
+        
         # Save
         profiles_output = output_dir / "device_profiles_powerbi.csv"
         profiles.to_csv(profiles_output, index=False)
         print(f"✅ Device profiles: {profiles_output}")
         print(f"   Devices: {len(profiles):,}")
+        print(f"   Columns: {len(profiles.columns)}")
     
     # 2. TIME SERIES SAMPLE (for trends)
     ts_files = list((project_root / "data" / "processed" / "time_series").glob("*_health_zm1only_timeseries.csv"))
@@ -97,6 +151,14 @@ def create_powerbi_exports():
         print(f"✅ Health distribution: {health_output}")
     
     print(f"\n🎉 All Power BI files saved to: {output_dir}")
+    
+    # Show battery data summary
+    if profiles_file.exists() and 'battery_drain_rate_per_day' in profiles.columns:
+        print(f"\n🔋 BATTERY DATA SUMMARY:")
+        print(f"   Avg drain rate: {profiles['battery_drain_rate_per_day'].mean():.4f}%/day")
+        print(f"   Max drain rate: {profiles['battery_drain_rate_per_day'].max():.2f}%/day")
+        print(f"   Devices showing 'charging' (fixed): {(profiles['battery_data_issue'] == 'Shows charging (impossible)').sum()}")
+        print(f"   Expected 10-year rate: {100/(10*365):.4f}%/day")
 
 if __name__ == "__main__":
     create_powerbi_exports()

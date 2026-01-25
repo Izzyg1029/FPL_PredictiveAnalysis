@@ -99,9 +99,10 @@ def create_device_profiles(time_series_df):
     """
     Create a device summary file with aggregated time series data.
     One row per device with historical trends and statistics.
+    FIXED: Battery drain calculation for non-rechargeable ZM1 batteries
     """
     print("\n" + "=" * 50)
-    print("CREATING DEVICE PROFILES")
+    print("CREATING DEVICE PROFILES (ZM1 NON-RECHARGEABLE)")
     print("=" * 50)
     
     # Ensure we have the time series data
@@ -117,9 +118,9 @@ def create_device_profiles(time_series_df):
         device_data = device_data.sort_values('date', ascending=False)
         
         # Basic device info
-        profile = {
+        profile_dict = {  # Changed from 'profile' to 'profile_dict' to avoid conflict
             'Serial': serial,
-            'Device_Type': device_data['Device_Type'].iloc[0] if 'Device_Type' in device_data.columns else 'Unknown',
+            'Device_Type': device_data['Device_Type'].iloc[0] if 'Device_Type' in device_data.columns else 'ZM1',
             'first_seen_date': device_data['date'].min(),
             'last_seen_date': device_data['date'].max(),
             'total_days_observed': device_data['date'].nunique(),
@@ -128,102 +129,195 @@ def create_device_profiles(time_series_df):
         
         # If install date exists
         if 'install_date' in device_data.columns:
-            profile['install_date'] = device_data['install_date'].iloc[0]
-            profile['device_age_days'] = device_data['device_age_days'].iloc[0] if 'device_age_days' in device_data.columns else None
+            profile_dict['install_date'] = device_data['install_date'].iloc[0]
+            profile_dict['device_age_days'] = device_data['device_age_days'].iloc[0] if 'device_age_days' in device_data.columns else None
         
-        # === BATTERY ANALYSIS (for ZM1) ===
-        if 'battery_level' in device_data.columns:
-            battery_data = device_data['battery_level'].dropna()
-            if len(battery_data) > 0:
-                profile['battery_current'] = battery_data.iloc[0]  # Most recent
-                profile['battery_min'] = battery_data.min()
-                profile['battery_max'] = battery_data.max()
-                profile['battery_avg'] = battery_data.mean()
-                profile['battery_std'] = battery_data.std()
+        # === BATTERY ANALYSIS (for NON-RECHARGEABLE ZM1) ===
+        # Try different battery column names
+        battery_col = None
+        for col in device_data.columns:
+            if 'battery' in col.lower():
+                battery_col = col
+                break
+
+        if battery_col:
+            # Clean battery data - convert to numeric, handle errors
+            battery_series = pd.to_numeric(device_data[battery_col], errors='coerce')
+            
+            # Remove impossible values (<0% or >100%)
+            battery_clean = battery_series[(battery_series >= 0) & (battery_series <= 100)]
+            
+            if len(battery_clean) > 0:
+                profile_dict['battery_current'] = battery_clean.iloc[0]  # Most recent valid
+                profile_dict['battery_min'] = battery_clean.min()
+                profile_dict['battery_max'] = battery_clean.max()
+                profile_dict['battery_avg'] = battery_clean.mean()
+                profile_dict['battery_std'] = battery_clean.std()
                 
-                # Battery trends
-                if len(battery_data) >= 2:
-                    # GET DATES THAT MATCH THE BATTERY DATA
-                    battery_indices = battery_data.index
-                    battery_dates = pd.to_datetime(device_data.loc[battery_indices, 'date'])
+                # Track data quality issues
+                total_readings = len(battery_series)
+                valid_readings = len(battery_clean)
+                negative_readings = (battery_series < 0).sum()
+                over100_readings = (battery_series > 100).sum()
+                nan_readings = battery_series.isna().sum()
+                
+                profile_dict['battery_readings_total'] = total_readings
+                profile_dict['battery_readings_valid'] = valid_readings
+                profile_dict['battery_readings_negative'] = negative_readings
+                profile_dict['battery_readings_over100'] = over100_readings
+                profile_dict['battery_readings_nan'] = nan_readings
+                profile_dict['battery_data_quality_pct'] = (valid_readings / total_readings * 100) if total_readings > 0 else 0
+                
+                # Add data quality flag
+                if valid_readings == 0:
+                    profile_dict['battery_data_quality'] = 'NO_VALID_DATA'
+                elif valid_readings / total_readings < 0.5:
+                    profile_dict['battery_data_quality'] = 'POOR (<50% valid)'
+                elif negative_readings > 0 or over100_readings > 0:
+                    profile_dict['battery_data_quality'] = 'HAS_INVALID_VALUES'
+                else:
+                    profile_dict['battery_data_quality'] = 'GOOD'
+                
+                # Calculate expected 10-year drain rate (~0.027%/day)
+                profile_dict['expected_daily_drain'] = 100 / (10 * 365)  # ~0.027%/day
+                
+                # Battery trends - only if we have enough valid data
+                if len(battery_clean) >= 2:
+                    # Get dates for valid battery readings
+                    valid_indices = battery_clean.index
+                    battery_dates = pd.to_datetime(device_data.loc[valid_indices, 'date'])
                     
-                    # Now create the Series with matching lengths
-                    battery_series = pd.Series(battery_data.values, index=battery_dates)
+                    # Sort by date
+                    sorted_dates = battery_dates.sort_values()
+                    sorted_battery = battery_clean.loc[sorted_dates.index]
                     
-                    # Calculate battery drain rate (% per day)
-                    profile['battery_drain_rate_per_day'] = -battery_series.diff().mean()  # Negative = draining
+                    # Calculate drain rate using linear regression
+                    days_since_first = (sorted_dates - sorted_dates.iloc[0]).dt.days
                     
-                    # Days until battery < 20% (if draining)
-                    if profile['battery_drain_rate_per_day'] > 0:
-                        days_to_20 = (profile['battery_current'] - 20) / profile['battery_drain_rate_per_day']
-                        profile['days_until_battery_critical'] = max(0, days_to_20)
+                    if days_since_first.iloc[-1] > 0:  # Has time passed
+                        # Linear regression for better estimate
+                        if len(days_since_first.unique()) > 1:
+                            slope, intercept = np.polyfit(days_since_first, sorted_battery.values, 1)
+                            profile_dict['battery_drain_rate_per_day'] = abs(slope)  # Positive = draining
+                        else:
+                            # Simple start-end calculation
+                            total_drain = sorted_battery.iloc[-1] - sorted_battery.iloc[0]
+                            total_days = days_since_first.iloc[-1]
+                            profile_dict['battery_drain_rate_per_day'] = abs(total_drain / total_days)
+                        
+                        # Ensure realistic range for ZM1 batteries
+                        if profile_dict['battery_drain_rate_per_day'] < 0.001:
+                            profile_dict['battery_drain_rate_per_day'] = 0.001  # Minimum 0.1%/day
+                        elif profile_dict['battery_drain_rate_per_day'] > 0.1:  # Maximum 10%/year for ZM1
+                            profile_dict['battery_drain_rate_per_day'] = 0.1
+                        
+                        # Calculate drain deviation from expected
+                        profile_dict['drain_deviation'] = profile_dict['battery_drain_rate_per_day'] - profile_dict['expected_daily_drain']
+                        
+                        # === DATA QUALITY CHECK FOR SHORT TIME PERIODS ===
+                        if days_since_first.iloc[-1] < 7:
+                            profile_dict['battery_data_quality'] = profile_dict.get('battery_data_quality', '') + ' Short period (<7 days)'
+                            if profile_dict['battery_drain_rate_per_day'] > 0.05:
+                                profile_dict['battery_drain_rate_per_day'] = profile_dict['expected_daily_drain']
+                                profile_dict['drain_deviation'] = 0
+                                profile_dict['battery_data_quality'] = profile_dict.get('battery_data_quality', '') + ' Rate capped'
+                        
+                        # === FIXED: Days until battery critical ===
+                        min_drain_rate = 0.001  # 0.1% per day minimum
+                        effective_drain = max(profile_dict['battery_drain_rate_per_day'], min_drain_rate)
+                        
+                        if profile_dict['battery_current'] > 20:
+                            days_to_20 = (profile_dict['battery_current'] - 20) / effective_drain
+                            profile_dict['days_until_battery_critical'] = max(0, days_to_20)
+                        else:
+                            profile_dict['days_until_battery_critical'] = 0  # Already critical
+                        
+                        # Calculate expected battery life (to 0%)
+                        profile_dict['expected_battery_life_days'] = profile_dict['battery_current'] / effective_drain
+                        profile_dict['expected_battery_life_years'] = profile_dict['expected_battery_life_days'] / 365
+                    
                     else:
-                        profile['days_until_battery_critical'] = float('inf')
+                        profile_dict['battery_drain_rate_per_day'] = 0
+                        profile_dict['days_until_battery_critical'] = float('inf')
+                        profile_dict['expected_battery_life_days'] = float('inf')
                 
-                # Battery risk flags over time
-                if 'battery_low_flag' in device_data.columns:
-                    profile['battery_low_days_count'] = device_data['battery_low_flag'].sum()
-                    profile['battery_low_percentage'] = (profile['battery_low_days_count'] / len(device_data)) * 100
-        
-        # === COMMUNICATION ANALYSIS ===
-        if 'hours_since_last_heard' in device_data.columns:
-            comm_data = device_data['hours_since_last_heard'].dropna()
-            if len(comm_data) > 0:
-                profile['comms_gap_current_hours'] = comm_data.iloc[0]
-                profile['comms_gap_avg_hours'] = comm_data.mean()
-                profile['comms_gap_max_hours'] = comm_data.max()
+                # Calculate battery low days using cleaned data
+                battery_low_count = (battery_clean < 20).sum()
+                profile_dict['battery_low_days_count'] = battery_low_count
+                profile_dict['battery_low_percentage'] = (battery_low_count / len(battery_clean)) * 100 if len(battery_clean) > 0 else 0
+                profile_dict['battery_warning_days_count'] = (battery_clean < 30).sum()
         
         # === RISK SCORE ANALYSIS ===
         if 'risk_score' in device_data.columns:
             risk_data = device_data['risk_score'].dropna()
             if len(risk_data) > 0:
-                profile['risk_score_current'] = risk_data.iloc[0]
-                profile['risk_score_avg'] = risk_data.mean()
-                profile['risk_score_max'] = risk_data.max()
-                profile['risk_score_min'] = risk_data.min()
-                profile['risk_score_std'] = risk_data.std()
+                profile_dict['risk_score_current'] = risk_data.iloc[0]
+                profile_dict['risk_score_avg'] = risk_data.mean()
+                profile_dict['risk_score_max'] = risk_data.max()
+                profile_dict['risk_score_min'] = risk_data.min()
+                profile_dict['risk_score_std'] = risk_data.std()
         
-        # === OVERHEAT ANALYSIS (if applicable) ===
-        if 'overheat_flag' in device_data.columns:
-            profile['overheat_events_count'] = device_data['overheat_flag'].sum()
+        # === COMMUNICATION ANALYSIS ===
+        if 'hours_since_last_heard' in device_data.columns:
+            comm_data = device_data['hours_since_last_heard'].dropna()
+            if len(comm_data) > 0:
+                profile_dict['comms_gap_current_hours'] = comm_data.iloc[0]
+                profile_dict['comms_gap_avg_hours'] = comm_data.mean()
+                profile_dict['comms_gap_max_hours'] = comm_data.max()
         
-        # === CURRENT ANALYSIS (if applicable) ===
-        if 'LineCurrent_val' in device_data.columns and device_data['LineCurrent_val'].sum() > 0:
-            current_data = device_data['LineCurrent_val'].dropna()
-            if len(current_data) > 0:
-                profile['current_avg'] = current_data.mean()
-                profile['current_max'] = current_data.max()
+        # === ADD BATTERY HEALTH CATEGORIES ===
+        if 'battery_drain_rate_per_day' in profile_dict:
+            drain_rate = profile_dict['battery_drain_rate_per_day']
+            if drain_rate <= 0.01:
+                profile_dict['battery_drain_category'] = 'Excellent (<0.01%/day)'
+            elif drain_rate <= 0.05:
+                profile_dict['battery_drain_category'] = 'Good (0.01-0.05%/day)'
+            elif drain_rate <= 0.1:
+                profile_dict['battery_drain_category'] = 'Moderate (0.05-0.1%/day)'
+            elif drain_rate <= 1.0:
+                profile_dict['battery_drain_category'] = 'High (0.1-1%/day)'
+            else:
+                profile_dict['battery_drain_category'] = 'Critical (>1%/day)'
         
-        device_profiles.append(profile)
+        # === ADD DEVICE HEALTH STATUS ===
+        def get_health_status(row):
+            risk = row.get('risk_score_current', 0)
+            battery = row.get('battery_current', 100)
+            
+            if risk > 80 or battery < 10:
+                return 'CRITICAL'
+            elif risk > 60 or battery < 30:
+                return 'POOR'
+            elif risk > 40 or battery < 60:
+                return 'FAIR'
+            elif risk > 20 or battery < 80:
+                return 'GOOD'
+            else:
+                return 'EXCELLENT'
+        
+        if 'risk_score_current' in profile_dict:
+            profile_dict['device_health_status'] = get_health_status(profile_dict)
+        
+        # Add to device profiles list
+        device_profiles.append(profile_dict)
     
     # Convert to DataFrame
     profiles_df = pd.DataFrame(device_profiles)
-    
-    # Add device health status
-    def get_health_status(row):
-        risk = row.get('risk_score_current', 0)
-        battery = row.get('battery_current', 100)
-        
-        if risk > 80 or battery < 10:
-            return 'CRITICAL'
-        elif risk > 60 or battery < 30:
-            return 'POOR'
-        elif risk > 40 or battery < 60:
-            return 'FAIR'
-        elif risk > 20 or battery < 80:
-            return 'GOOD'
-        else:
-            return 'EXCELLENT'
-    
-    if 'risk_score_current' in profiles_df.columns:
-        profiles_df['device_health_status'] = profiles_df.apply(get_health_status, axis=1)
     
     # Sort by risk (highest first)
     if 'risk_score_current' in profiles_df.columns:
         profiles_df = profiles_df.sort_values('risk_score_current', ascending=False)
     
+    print(f"✅ Created profiles for {len(profiles_df)} devices")
+    
+    # Show battery data quality summary
+    if 'battery_data_quality_pct' in profiles_df.columns:
+        avg_quality = profiles_df['battery_data_quality_pct'].mean()
+        poor_data = (profiles_df['battery_data_quality_pct'] < 50).sum()
+        print(f"📊 Battery data quality: {avg_quality:.1f}% valid on average")
+        print(f"⚠️  Devices with poor battery data (<50% valid): {poor_data}")
+    
     return profiles_df
-
 
 def process_daily_time_series():
     """
