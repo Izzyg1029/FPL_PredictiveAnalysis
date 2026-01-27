@@ -77,7 +77,7 @@ for file in all_files:
             print(f"   ⚠️  No install_dates.csv found - device age features will be limited")
       
       # Check if health features already exist ======
-        # Check if risk_score already exists
+          # Check if risk_score already exists
         if 'risk_score' in df.columns:
             print(f"   ✅ Health features already calculated in CSV!")
             print(f"   📊 Risk scores: min={df['risk_score'].min():.2f}, max={df['risk_score'].max():.2f}, mean={df['risk_score'].mean():.2f}")

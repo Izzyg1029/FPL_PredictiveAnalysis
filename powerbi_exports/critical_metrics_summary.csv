@@ -1,0 +1,10 @@
+metric,count,percentage
+Total Devices,3270,100.0
+Not Communicating (>7d),19,0.581039755351682
+Sensor Issues,0,0.0
+Fast Draining,10,0.3058103975535168
+Critical Battery (<30d),0,0.0
+Emergency Battery (<7d),0,0.0
+High Priority,10,0.3058103975535168
+Medium Priority,30,0.9174311926605505
+Low Priority,3230,98.77675840978594
