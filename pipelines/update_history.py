@@ -1,4 +1,6 @@
-﻿from pathlib import Path
+﻿# update_history.py - FIXED VERSION (creates history if missing)
+
+from pathlib import Path
 import json
 import pandas as pd
 import numpy as np
@@ -50,17 +52,22 @@ def main():
     all_csvs = sorted(RAW_DIR.glob("*.csv"))
     new_csvs = [f for f in all_csvs if f.name not in processed]
 
-    if not new_csvs:
-        print("✅ No new daily files. History is up to date.")
-        return
-
-    if HISTORY_PATH.exists():
-        hist = pd.read_parquet(HISTORY_PATH)
+    # SPECIAL CASE: If history doesn't exist at all, process ALL files
+    if not HISTORY_PATH.exists():
+        print("No history file found. Creating new history from ALL files...")
+        new_csvs = all_csvs  # Process all files
+        hist = pd.DataFrame()  # Start with empty history
     else:
-        hist = pd.DataFrame()
+        # Load existing history
+        hist = pd.read_parquet(HISTORY_PATH)
+
+    if not new_csvs:
+        print("No new daily files. History is up to date.")
+        return
 
     new_frames = []
     for f in new_csvs:
+        print(f"Processing: {f.name}")
         df = pd.read_csv(f)
         df["_source_file"] = f.name
         new_frames.append(df)
@@ -85,11 +92,16 @@ def main():
 
     combined.to_parquet(HISTORY_PATH, index=False)
 
-    state["processed_files"] = sorted(list(processed | {f.name for f in new_csvs}))
+    # Update state with processed files
+    if not HISTORY_PATH.exists():  # If we just created it, mark ALL as processed
+        state["processed_files"] = sorted([f.name for f in all_csvs])
+    else:
+        state["processed_files"] = sorted(list(processed | {f.name for f in new_csvs}))
+    
     save_state(state)
 
-    print(f"✅ Added {len(new_csvs)} new file(s). Total rows now: {len(combined):,}")
-    print(f"📦 History saved to: {HISTORY_PATH}")
+    print(f"Added {len(new_csvs)} new file(s). Total rows now: {len(combined):,}")
+    print(f"History saved to: {HISTORY_PATH}")
 
 
 if __name__ == "__main__":

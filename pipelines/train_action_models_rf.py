@@ -49,7 +49,7 @@ def main():
     if "action_label" not in df.columns:
         raise KeyError("Missing action_label. Run pipelines/label_actions.py first.")
 
-    # ✅ drop missing device types
+    #  drop missing device types
     before = len(df)
     df = df[df[args.device_type_col].notna()].copy()
     if len(df) != before:
@@ -75,7 +75,7 @@ def main():
 
         # need at least 2 classes
         if sub["action_label"].nunique() < 2:
-            print(f"⚠️ Skipping {dt}: only one action class present.")
+            print(f" Skipping {dt}: only one action class present.")
             print(sub["action_label"].value_counts())
             continue
 
@@ -104,7 +104,7 @@ def main():
         outdir = models_dir / str(dt)
         outdir.mkdir(parents=True, exist_ok=True)
 
-        # ✅ save bundle with exact training features
+        #  save bundle with exact training features
         joblib.dump({"model": rf, "features": feature_cols}, outdir / "action_rf.joblib")
 
         metrics = {
@@ -120,7 +120,7 @@ def main():
         }
         (outdir / "action_metrics.json").write_text(json.dumps(metrics, indent=2), encoding="utf-8")
 
-        print(f"✅ Trained RF for {dt} -> {outdir}")
+        print(f"Trained RF for {dt} -> {outdir}")
 
     print("Done.")
 

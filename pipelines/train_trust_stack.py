@@ -282,7 +282,7 @@ def main():
     train_df, test_df = chrono_split(df, args.date_col, train_frac=args.train_frac)
 
     # Debug: show class balance
-    print("\n📊 Label counts:")
+    print("\n Label counts:")
     print("Train:\n", train_df[args.label_col].value_counts(dropna=False))
     print("Test:\n", test_df[args.label_col].value_counts(dropna=False))
 
@@ -400,12 +400,12 @@ def main():
 
     test_out.to_csv(out_dir / "test_predictions_with_explanations.csv", index=False)
 
-    print(f"\n✅ Saved outputs to: {out_dir.resolve()}")
+    print(f"\n Saved outputs to: {out_dir.resolve()}")
     print("   - model_report.txt")
     print("   - decision_tree_rules.txt")
     print("   - rf_feature_importance.csv")
     print("   - test_predictions_with_explanations.csv")
-    print("\nℹ️  If labels are still all 0s, LOWER --risk_threshold (try 25 or 30).")
+    print("\n If labels are still all 0s, LOWER --risk_threshold (try 25 or 30).")
     print("    If too many 1s, raise it (try 50 or 70).\n")
 
 

@@ -69,7 +69,7 @@ def main():
     if not HISTORY_PATH.exists():
         raise FileNotFoundError(f"Missing {HISTORY_PATH}. Run pipelines/update_history.py first.")
 
-    print("📦 Loading history...")
+    print(" Loading history...")
     df = pd.read_parquet(HISTORY_PATH)
 
     if "Serial" not in df.columns:
@@ -90,7 +90,7 @@ def main():
     before = len(df)
     df = df[df["device_type"].notna()].copy()
     if len(df) != before:
-        print(f"🧹 Dropped {before-len(df):,} rows with missing device_type")
+        print(f"Dropped {before-len(df):,} rows with missing device_type")
 
     if "BatteryLatestReport" in df.columns:
         df["BatteryLatestReport"] = pd.to_datetime(df["BatteryLatestReport"], errors="coerce")
@@ -101,7 +101,7 @@ def main():
     else:
         latest = df.drop_duplicates("Serial", keep="last")
 
-    print(f"✅ Latest records: {len(latest):,}")
+    print(f" Latest records: {len(latest):,}")
     print("device_type latest counts:")
     print(latest["device_type"].value_counts(dropna=False))
 
@@ -117,12 +117,12 @@ def main():
 
         model, feature_cols = load_model_bundle(device_type)
         if model is None or feature_cols is None:
-            print(f"⚠️ Skipping {device_type}: missing model/features")
+            print(f" Skipping {device_type}: missing model/features")
             continue
 
         subset = latest[latest["device_type"] == device_type].copy()
         if subset.empty:
-            print(f"⚠️ No rows for {device_type}, skipping")
+            print(f" No rows for {device_type}, skipping")
             continue
 
         # Build X with exact training features
@@ -143,18 +143,17 @@ def main():
         subset["Confidence"] = probs
 
         predictions.append(subset)
-        print(f"✅ Predicted {device_type}: {len(subset):,}")
+        print(f" Predicted {device_type}: {len(subset):,}")
 
     if not predictions:
-        print("⚠️ No predictions generated.")
+        print(" No predictions generated.")
         return
 
     result = pd.concat(predictions, ignore_index=True)
 
     out_path = OUTPUT_DIR / "predictions_latest.csv"
     written = safe_write_csv(result, out_path)
-    print(f"📊 Predictions saved → {written}")
-
+    print(f"Predictions saved to: {written}")
 
 if __name__ == "__main__":
     main()

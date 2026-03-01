@@ -83,7 +83,7 @@ def main():
 
     df["device_type"] = dt.map(normalize_device_type_value)
 
-    # ✅ drop rows with missing/unknown device_type
+    #  drop rows with missing/unknown device_type
     before = len(df)
     df = df[df["device_type"].notna()].copy()
     dropped = before - len(df)
@@ -203,7 +203,7 @@ def main():
     out_path.parent.mkdir(parents=True, exist_ok=True)
     df.to_parquet(out_path, index=False)
 
-    print(f"✅ Labeled actions saved -> {out_path}")
+    print(f" Labeled actions saved -> {out_path}")
     print("\ndevice_type counts:")
     print(df["device_type"].value_counts(dropna=False))
     print("\naction_name counts:")

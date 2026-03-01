@@ -81,7 +81,7 @@ def create_critical_metrics_summary(profiles, ts_data):
     """Create comprehensive summary of critical device metrics with NON-LINEAR battery modeling"""
     
     # 1. Communication Status Analysis
-    print("   📡 Analyzing communication status...")
+    print("    Analyzing communication status...")
     if 'Date' in ts_data.columns or 'date' in ts_data.columns:
         date_col = 'Date' if 'Date' in ts_data.columns else 'date'
         ts_data[date_col] = pd.to_datetime(ts_data[date_col])
@@ -115,7 +115,7 @@ def create_critical_metrics_summary(profiles, ts_data):
         profiles['not_communicating_7d'] = (profiles['days_since_last_comm'] > 7) | (profiles['days_since_last_comm'].isna())
     
     # 2. Battery Sensor Issues (Age-adjusted for non-linear model)
-    print("   ⚠️  Identifying sensor issues...")
+    print("     Identifying sensor issues...")
     profiles['has_sensor_issue'] = False
     profiles['sensor_issue_reason'] = ''
 
@@ -156,7 +156,7 @@ def create_critical_metrics_summary(profiles, ts_data):
     profiles['sensor_issue_reason'] = profiles['sensor_issue_reason'].str.strip()
     
     # 3. NON-LINEAR Battery Life Analysis
-    print("   📅 Analyzing NON-LINEAR battery life projections...")
+    print("    Analyzing NON-LINEAR battery life projections...")
 
     profiles['projected_life_years'] = None
     profiles['years_remaining'] = None
@@ -333,7 +333,7 @@ def create_critical_metrics_summary(profiles, ts_data):
         )
     
     # 4. Batteries Closest to Failure
-    print("   💀 Identifying critical batteries...")
+    print("   Identifying critical batteries...")
     
     if 'days_to_critical' in profiles.columns:
         profiles['estimated_days_remaining'] = profiles['days_to_critical']
@@ -356,7 +356,7 @@ def create_critical_metrics_summary(profiles, ts_data):
         profiles['emergency_battery_7d'] = profiles['estimated_days_remaining'] < 7
     
     # 5. Overall Risk Score (updated with non-linear factors)
-    print("   📊 Calculating overall risk score...")
+    print("   Calculating overall risk score...")
     
     profiles['comm_risk_score'] = 0
     profiles['sensor_risk_score'] = 0
@@ -464,37 +464,37 @@ def create_critical_metrics_summary(profiles, ts_data):
 def create_critical_devices_export(profiles, output_dir):
     """Create special exports for critical devices"""
     
-    print("\n🔴 CREATING CRITICAL DEVICES EXPORTS")
+    print("\n CREATING CRITICAL DEVICES EXPORTS")
     
     # 1. Devices Not Communicating (>7 days)
     not_comm_devices = profiles[profiles['not_communicating_7d'] == True]
     not_comm_file = output_dir / "critical_not_communicating.csv"
     not_comm_devices.to_csv(not_comm_file, index=False)
-    print(f"✅ Devices not communicating (>7d): {len(not_comm_devices)}")
+    print(f"Devices not communicating (>7d): {len(not_comm_devices)}")
     
     # 2. Devices with Sensor Issues
     sensor_issue_devices = profiles[profiles['has_sensor_issue'] == True]
     sensor_issue_file = output_dir / "critical_sensor_issues.csv"
     sensor_issue_devices.to_csv(sensor_issue_file, index=False)
-    print(f"✅ Devices with sensor issues: {len(sensor_issue_devices)}")
+    print(f" Devices with sensor issues: {len(sensor_issue_devices)}")
     
     # 3. Fast Draining Batteries
     fast_drain_devices = profiles[profiles['is_fast_draining'] == True]
     fast_drain_file = output_dir / "critical_fast_draining.csv"
     fast_drain_devices.to_csv(fast_drain_file, index=False)
-    print(f"✅ Fast draining batteries: {len(fast_drain_devices)}")
+    print(f"Fast draining batteries: {len(fast_drain_devices)}")
     
     # 4. Batteries Closest to Death (<30 days)
     critical_battery_devices = profiles[profiles['critical_battery_30d'] == True]
     critical_battery_file = output_dir / "critical_battery_low.csv"
     critical_battery_devices.to_csv(critical_battery_file, index=False)
-    print(f"✅ Batteries with <30 days remaining: {len(critical_battery_devices)}")
+    print(f" Batteries with <30 days remaining: {len(critical_battery_devices)}")
     
     # 5. Emergency Batteries (<7 days)
     emergency_devices = profiles[profiles['emergency_battery_7d'] == True]
     emergency_file = output_dir / "emergency_battery.csv"
     emergency_devices.to_csv(emergency_file, index=False)
-    print(f"✅ EMERGENCY: Batteries with <7 days remaining: {len(emergency_devices)}")
+    print(f" EMERGENCY: Batteries with <7 days remaining: {len(emergency_devices)}")
     
     # 6. All Critical Devices (combined view)
     critical_columns = ['Serial', 'device_health_status', 'priority_level', 'risk_category', 
@@ -514,7 +514,7 @@ def create_critical_devices_export(profiles, output_dir):
         critical_view = has_issue[critical_columns].sort_values(['priority_level', 'overall_risk_score'], ascending=[False, False])
         critical_file = output_dir / "all_critical_devices.csv"
         critical_view.to_csv(critical_file, index=False)
-        print(f"✅ All critical devices view: {len(critical_view)} devices")
+        print(f" All critical devices view: {len(critical_view)} devices")
     
     # 7. Summary Dashboard Data
     summary_data = {
@@ -556,7 +556,7 @@ def create_critical_devices_export(profiles, output_dir):
     summary_df = pd.DataFrame(summary_data)
     summary_file = output_dir / "critical_metrics_summary.csv"
     summary_df.to_csv(summary_file, index=False)
-    print(f"✅ Critical metrics summary created")
+    print(f" Critical metrics summary created")
     
     return summary_df
 
@@ -569,14 +569,14 @@ def create_time_to_failure_estimation(profiles, output_dir):
     Calculate NON-LINEAR time-to-failure based on battery drain rates
     """
     
-    print("\n⏰ CREATING NON-LINEAR TIME-TO-FAILURE ESTIMATES")
+    print("\n CREATING NON-LINEAR TIME-TO-FAILURE ESTIMATES")
     print("=" * 50)
     
     # Filter for ZM1 devices only
     zm1_devices = profiles[profiles['Device_Type_Standardized'] == 'ZM1'].copy()
     
     if len(zm1_devices) == 0:
-        print("⚠️  No ZM1 devices found")
+        print("  No ZM1 devices found")
         return None
     
     print(f"   ZM1 devices: {len(zm1_devices)}")
@@ -745,7 +745,7 @@ def create_time_to_failure_estimation(profiles, output_dir):
     failure_df = pd.DataFrame(failure_data)
     
     if len(failure_df) == 0:
-        print("❌ No failure data created")
+        print(" No failure data created")
         return None
     
     # Sort by urgency (soonest first)
@@ -804,25 +804,25 @@ def create_time_to_failure_estimation(profiles, output_dir):
     calendar_file = output_dir / "replacement_calendar.csv"
     calendar_view.to_csv(calendar_file, index=False)
     
-    print(f"\n✅ NON-LINEAR time-to-failure estimates created:")
+    print(f"\n NON-LINEAR time-to-failure estimates created:")
     print(f"   Detailed data: {failure_file}")
     print(f"   Summary: {summary_file}")
     print(f"   Replacement calendar: {calendar_file}")
     
     # Print key insights
-    print(f"\n📊 KEY INSIGHTS (NON-LINEAR MODEL):")
+    print(f"\n KEY INSIGHTS (NON-LINEAR MODEL):")
     print(f"   Average time to critical: {failure_df['Years_To_Critical'].mean():.1f} years")
     print(f"   Minimum time to critical: {failure_df['Days_To_Critical'].min():.0f} days")
     
     urgent_count = len(failure_df[failure_df['Priority_Level'] <= 3])
     if urgent_count > 0:
-        print(f"   ⚠️  {urgent_count} devices need attention within 6 months")
+        print(f"     {urgent_count} devices need attention within 6 months")
     
     actual_data_pct = (len(failure_df[failure_df['Drain_Rate_Source'] == 'Actual']) / len(failure_df) * 100)
     print(f"   {actual_data_pct:.1f}% using actual drain rates, rest using expected rates")
     
     if devices_with_issues > 0:
-        print(f"   ⚠️  {devices_with_issues} devices already at or below 20% battery")
+        print(f"     {devices_with_issues} devices already at or below 20% battery")
     
     # Show acceleration factor
     if 'Age_Factor' in failure_df.columns:
@@ -836,7 +836,7 @@ def create_failure_timeline_visualization(failure_df, output_dir):
     Create visualization data showing failure timeline
     """
     
-    print("\n📅 CREATING FAILURE TIMELINE VISUALIZATION")
+    print("\n CREATING FAILURE TIMELINE VISUALIZATION")
     print("=" * 50)
     
     # Group by replacement quarter
@@ -861,7 +861,7 @@ def create_failure_timeline_visualization(failure_df, output_dir):
     timeline_file = output_dir / "failure_timeline_by_quarter.csv"
     timeline_data.to_csv(timeline_file, index=False)
     
-    print(f"✅ Failure timeline by quarter: {timeline_file}")
+    print(f" Failure timeline by quarter: {timeline_file}")
     
     # Create monthly view for next 12 months
     today = pd.Timestamp.now()
@@ -888,14 +888,14 @@ def create_failure_timeline_visualization(failure_df, output_dir):
     monthly_file = output_dir / "monthly_failure_forecast.csv"
     monthly_df.to_csv(monthly_file, index=False)
     
-    print(f"✅ Monthly failure forecast: {monthly_file}")
+    print(f" Monthly failure forecast: {monthly_file}")
     
     return timeline_data, monthly_df
 
 def create_battery_drain_simulation(failure_df, output_dir):
     """Create NON-LINEAR battery drain simulation for urgent devices"""
     
-    print("\n🔋 CREATING NON-LINEAR BATTERY DRAIN SIMULATION")
+    print("\n CREATING NON-LINEAR BATTERY DRAIN SIMULATION")
     print("=" * 50)
     
     # Get urgent devices (fast-draining AND soon-to-fail)
@@ -998,8 +998,8 @@ def create_battery_drain_simulation(failure_df, output_dir):
     # Save simulation data
     simulation_file = output_dir / "battery_drain_simulation.csv"
     simulation_df.to_csv(simulation_file, index=False)
-    
-    print(f"✅ Battery drain simulation created: {simulation_file}")
+
+    print(f" Battery drain simulation created: {simulation_file}")
     print(f"   Total records: {len(simulation_df):,}")
     print(f"   Unique devices: {simulation_df[simulation_df['Is_Reference_Line'] != True]['Serial'].nunique()}")
     
@@ -1012,7 +1012,7 @@ def create_battery_drain_simulation(failure_df, output_dir):
     urgent_summary_file = output_dir / "urgent_devices_summary.csv"
     urgent_summary.to_csv(urgent_summary_file, index=False)
     
-    print(f"✅ Urgent devices summary: {urgent_summary_file}")
+    print(f" Urgent devices summary: {urgent_summary_file}")
     
     return simulation_df
 
@@ -1026,7 +1026,7 @@ def create_powerbi_exports():
     output_dir = project_root / "powerbi_exports"
     output_dir.mkdir(exist_ok=True)
     
-    print("📊 CREATING POWER BI EXPORTS")
+    print(" CREATING POWER BI EXPORTS")
     print("=" * 50)
     
     # 1. DEVICE PROFILES (Main dashboard data)
@@ -1034,12 +1034,12 @@ def create_powerbi_exports():
     if profiles_file.exists():
         try:
             profiles = pd.read_csv(profiles_file, low_memory=False)
-            print(f"   ✅ Loaded profiles: {len(profiles):,} devices")
+            print(f"    Loaded profiles: {len(profiles):,} devices")
         except Exception as e:
-            print(f"   ❌ Error loading profiles: {e}")
+            print(f"    Error loading profiles: {e}")
             profiles = pd.DataFrame()
     else:
-        print("❌ No device profiles file found")
+        print(" No device profiles file found")
         profiles = pd.DataFrame()
     
     if len(profiles) > 0:
@@ -1084,7 +1084,7 @@ def create_powerbi_exports():
         # Save
         profiles_output = output_dir / "device_profiles_powerbi.csv"
         profiles.to_csv(profiles_output, index=False)
-        print(f"✅ Device profiles: {profiles_output}")
+        print(f" Device profiles: {profiles_output}")
         print(f"   Devices: {len(profiles):,}")
         print(f"   Columns: {len(profiles.columns)}")
     
@@ -1094,12 +1094,12 @@ def create_powerbi_exports():
         ts_file = ts_files[-1]
         try:
             ts_data = pd.read_csv(ts_file, low_memory=False)
-            print(f"   ✅ Loaded time series: {len(ts_data):,} records")
+            print(f"    Loaded time series: {len(ts_data):,} records")
         except Exception as e:
-            print(f"   ❌ Error loading time series: {e}")
+            print(f"    Error loading time series: {e}")
             ts_data = pd.DataFrame()
     else:
-        print("❌ No time series files found")
+        print(" No time series files found")
         ts_data = pd.DataFrame()
     
     if len(ts_data) > 0:
@@ -1118,7 +1118,7 @@ def create_powerbi_exports():
             
             # Create critical metrics analysis
             if len(profiles) > 0:
-                print("   ⚙️  Creating critical metrics analysis...")
+                print("    Creating critical metrics analysis...")
                 profiles = create_critical_metrics_summary(profiles, ts_sample)
             
             # Create critical devices exports
@@ -1133,12 +1133,12 @@ def create_powerbi_exports():
             # Save time series sample
             ts_output = output_dir / "time_series_sample_powerbi.csv"
             ts_sample.to_csv(ts_output, index=False)
-            print(f"✅ Time series sample (last 30 days): {ts_output}")
+            print(f" Time series sample (last 30 days): {ts_output}")
             print(f"   Records: {len(ts_sample):,}")
     
     # 3. TIME-TO-FAILURE AND SIMULATION
     if len(profiles) > 0:
-        print("\n⏰ CREATING TIME-TO-FAILURE ESTIMATES")
+        print("\n CREATING TIME-TO-FAILURE ESTIMATES")
         failure_df = create_time_to_failure_estimation(profiles, output_dir)
         
         if failure_df is not None:
@@ -1177,7 +1177,7 @@ def create_powerbi_exports():
         daily_df = pd.DataFrame(daily_stats)
         daily_output = output_dir / "daily_summary_powerbi.csv"
         daily_df.to_csv(daily_output, index=False)
-        print(f"✅ Daily summary: {daily_output}")
+        print(f" Daily summary: {daily_output}")
         print(f"   Days: {len(daily_df)}")
     
     # 5. HEALTH DISTRIBUTION
@@ -1188,13 +1188,13 @@ def create_powerbi_exports():
         
         health_output = output_dir / "health_distribution_powerbi.csv"
         health_dist.to_csv(health_output, index=False)
-        print(f"✅ Health distribution: {health_output}")
+        print(f" Health distribution: {health_output}")
     
-    print(f"\n🎉 All Power BI files saved to: {output_dir}")
+    print(f"\n All Power BI files saved to: {output_dir}")
     
     # Show battery data summary
     if len(profiles) > 0 and 'battery_drain_rate_per_day' in profiles.columns:
-        print(f"\n🔋 BATTERY DATA SUMMARY:")
+        print(f"\n BATTERY DATA SUMMARY:")
         print(f"   Avg drain rate: {profiles['battery_drain_rate_per_day'].mean():.4f}%/day")
         print(f"   Max drain rate: {profiles['battery_drain_rate_per_day'].max():.2f}%/day")
         if 'battery_data_issue' in profiles.columns:

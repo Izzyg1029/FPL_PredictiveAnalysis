@@ -35,18 +35,18 @@ def prepare_ml_dataset(time_series_path=None):
         time_series_path = project_root / "data" / "processed" / "time_series" / "2025-09-13_to_2025-10-13_health_zm1only_timeseries.csv"
     
     if not time_series_path.exists():
-        print(f"❌ Time series file not found: {time_series_path}")
+        print(f" Time series file not found: {time_series_path}")
         # Try to find latest time series file
         ts_dir = project_root / "data" / "processed" / "time_series"
         ts_files = list(ts_dir.glob("*health_zm1only_timeseries.csv"))
         if ts_files:
             time_series_path = ts_files[-1]  # Use most recent
-            print(f"📁 Using latest time series: {time_series_path.name}")
+            print(f" Using latest time series: {time_series_path.name}")
         else:
-            print("❌ No time series files found. Run process_daily_time_series.py first.")
+            print(" No time series files found. Run process_daily_time_series.py first.")
             return None
     
-    print(f"📊 Loading time series data from: {time_series_path}")
+    print(f" Loading time series data from: {time_series_path}")
     df = pd.read_csv(time_series_path)
     print(f"   Loaded {len(df):,} records, {df['Serial'].nunique():,} unique devices")
     
@@ -56,7 +56,7 @@ def prepare_ml_dataset(time_series_path=None):
     # ====================================================
     # FEATURE ENGINEERING
     # ====================================================
-    print("\n🔧 ENGINEERING FEATURES...")
+    print("\n ENGINEERING FEATURES...")
     
     # Ensure we have the 5 original features
     original_features = ["battery_level", "LineTemperature_val", "LineCurrent_val", 
@@ -83,7 +83,7 @@ def prepare_ml_dataset(time_series_path=None):
         
         # Calculate risk: higher when battery low AND device old
         df['age_adjusted_battery_risk'] = (1 - battery_normalized) * (0.3 + 0.7 * age_normalized)
-        print(f"   ✓ Created: age_adjusted_battery_risk")
+        print(f"    Created: age_adjusted_battery_risk")
     
     # 2. Maintenance urgency score (engineered feature)
     # Combines multiple risk factors
@@ -127,7 +127,7 @@ def prepare_ml_dataset(time_series_path=None):
         )
         df['maintenance_urgency_score'] += comm_component
     
-    print(f"   ✓ Created: maintenance_urgency_score")
+    print(f"    Created: maintenance_urgency_score")
     
     # 3. Old and hot flag (engineered feature)
     # Flags devices that are both old and running hot
@@ -139,16 +139,16 @@ def prepare_ml_dataset(time_series_path=None):
             (df['device_age_months'] > old_threshold) & 
             (df['LineTemperature_val'] > hot_threshold), 1, 0
         )
-        print(f"   ✓ Created: old_and_hot_flag (thresholds: age>{old_threshold:.1f}mo, temp>{hot_threshold:.1f}°C)")
+        print(f"    Created: old_and_hot_flag (thresholds: age>{old_threshold:.1f}mo, temp>{hot_threshold:.1f}°C)")
     
     # ====================================================
     # CREATE TARGET VARIABLE (LABEL) USING STATUS COLUMN
     # ====================================================
-    print("\n🎯 CREATING TARGET VARIABLES FROM STATUS COLUMN...")
+    print("\n CREATING TARGET VARIABLES FROM STATUS COLUMN...")
     
     # Check if Status column exists
     if 'Status' not in df.columns:
-        print("❌ 'Status' column not found in the dataset!")
+        print(" 'Status' column not found in the dataset!")
         print("   Available columns:", df.columns.tolist())
         
         # Fall back to the original method if Status column doesn't exist
@@ -290,7 +290,7 @@ def prepare_ml_dataset(time_series_path=None):
     missing_features = [f for f in ml_features if f not in df.columns]
     
     if missing_features:
-        print(f"\n⚠️  Missing features: {missing_features}")
+        print(f"\n  Missing features: {missing_features}")
         print("   Creating placeholder values...")
         
         for feature in missing_features:
@@ -299,7 +299,7 @@ def prepare_ml_dataset(time_series_path=None):
             else:
                 df[feature] = df[available_features[0]] if available_features else 0
     
-    print(f"\n✅ FINAL FEATURE SET ({len(ml_features)} features):")
+    print(f"\n FINAL FEATURE SET ({len(ml_features)} features):")
     for i, feat in enumerate(ml_features, 1):
         status = "✓" if feat in df.columns else "✗"
         print(f"   {i:2d}. {status} {feat}")
@@ -315,7 +315,7 @@ def prepare_ml_dataset(time_series_path=None):
     if rows_removed > 0:
         print(f"   Removed {rows_removed} rows with missing values")
     
-    print(f"\n📈 ML DATASET READY:")
+    print(f"\n ML DATASET READY:")
     print(f"   Total samples: {len(ml_df):,}")
     print(f"   Features: {len(ml_features)}")
     print(f"   Failure rate: {ml_df['failure_next_7d'].mean()*100:.1f}%")
@@ -334,7 +334,7 @@ def train_random_forest_model(ml_df, features, test_size=0.2, random_state=42):
     X = ml_df[features]
     y = ml_df['failure_next_7d']
     
-    print(f"📊 Dataset shape: {X.shape}")
+    print(f" Dataset shape: {X.shape}")
     print(f"   Features: {X.shape[1]}")
     print(f"   Samples: {X.shape[0]}")
     print(f"   Class distribution: {y.value_counts().to_dict()}")
@@ -344,14 +344,14 @@ def train_random_forest_model(ml_df, features, test_size=0.2, random_state=42):
         X, y, test_size=test_size, random_state=random_state, stratify=y
     )
     
-    print(f"\n🔀 Train-Test Split:")
+    print(f"\n Train-Test Split:")
     print(f"   Training set: {X_train.shape[0]:,} samples ({len(X_train)/len(X)*100:.1f}%)")
     print(f"   Test set: {X_test.shape[0]:,} samples ({len(X_test)/len(X)*100:.1f}%)")
     
     # ====================================================
     # TRAIN RANDOM FOREST
     # ====================================================
-    print("\n🌲 TRAINING RANDOM FOREST...")
+    print("\n TRAINING RANDOM FOREST...")
     
     # Define pipeline with scaling and classifier
     pipeline = Pipeline([
@@ -377,7 +377,7 @@ def train_random_forest_model(ml_df, features, test_size=0.2, random_state=42):
     # ====================================================
     # EVALUATION
     # ====================================================
-    print("\n📊 MODEL EVALUATION:")
+    print("\n MODEL EVALUATION:")
     
     # Predictions
     y_pred = pipeline.predict(X_test)
@@ -393,12 +393,12 @@ def train_random_forest_model(ml_df, features, test_size=0.2, random_state=42):
     print(f"   ROC-AUC:   {roc_auc_score(y_test, y_pred_proba):.3f}")
     
     # Classification report
-    print("\n📋 CLASSIFICATION REPORT:")
+    print("\n CLASSIFICATION REPORT:")
     print(classification_report(y_test, y_pred, target_names=['No Failure', 'Failure']))
     
     # Confusion matrix
     cm = confusion_matrix(y_test, y_pred)
-    print(f"📊 CONFUSION MATRIX:")
+    print(f" CONFUSION MATRIX:")
     print(f"   True Negatives:  {cm[0, 0]}")
     print(f"   False Positives: {cm[0, 1]}")
     print(f"   False Negatives: {cm[1, 0]}")
@@ -421,13 +421,13 @@ def train_random_forest_model(ml_df, features, test_size=0.2, random_state=42):
         'importance': importances
     }).sort_values('importance', ascending=False)
     
-    print("\n🔝 FEATURE IMPORTANCE RANKING:")
+    print("\n FEATURE IMPORTANCE RANKING:")
     for i, row in feature_importance_df.iterrows():
         print(f"   {i+1:2d}. {row['feature']:30s} {row['importance']:.4f}")
     
     # Identify strongest predictor
     strongest_feature = feature_importance_df.iloc[0]
-    print(f"\n🏆 STRONGEST PREDICTOR:")
+    print(f"\n STRONGEST PREDICTOR:")
     print(f"   Feature: {strongest_feature['feature']}")
     print(f"   Importance: {strongest_feature['importance']:.4f}")
     print(f"   Percentage of total: {strongest_feature['importance']/importances.sum()*100:.1f}%")
@@ -435,7 +435,7 @@ def train_random_forest_model(ml_df, features, test_size=0.2, random_state=42):
     # ====================================================
     # VISUALIZATION
     # ====================================================
-    print("\n📈 GENERATING VISUALIZATIONS...")
+    print("\n GENERATING VISUALIZATIONS...")
     
     # Create output directory
     output_dir = project_root / "reports" / "ml_results"
@@ -456,7 +456,7 @@ def train_random_forest_model(ml_df, features, test_size=0.2, random_state=42):
     importance_plot = output_dir / "feature_importance.png"
     plt.savefig(importance_plot, dpi=300, bbox_inches='tight')
     plt.close()
-    print(f"   ✓ Saved: {importance_plot}")
+    print(f"    Saved: {importance_plot}")
     
     # 2. Correlation Heatmap
     plt.figure(figsize=(10, 8))
@@ -468,7 +468,7 @@ def train_random_forest_model(ml_df, features, test_size=0.2, random_state=42):
     correlation_plot = output_dir / "feature_correlation.png"
     plt.savefig(correlation_plot, dpi=300, bbox_inches='tight')
     plt.close()
-    print(f"   ✓ Saved: {correlation_plot}")
+    print(f"    Saved: {correlation_plot}")
     
     # 3. ROC Curve
     from sklearn.metrics import roc_curve
@@ -484,22 +484,22 @@ def train_random_forest_model(ml_df, features, test_size=0.2, random_state=42):
     roc_plot = output_dir / "roc_curve.png"
     plt.savefig(roc_plot, dpi=300, bbox_inches='tight')
     plt.close()
-    print(f"   ✓ Saved: {roc_plot}")
+    print(f"    Saved: {roc_plot}")
     
     # ====================================================
     # SAVE MODEL AND RESULTS
     # ====================================================
-    print("\n💾 SAVING MODEL AND RESULTS...")
+    print("\n SAVING MODEL AND RESULTS...")
     
     # Save the trained model
     model_path = output_dir / "random_forest_fci_model.pkl"
     joblib.dump(pipeline, model_path)
-    print(f"   ✓ Model saved: {model_path}")
+    print(f"    Model saved: {model_path}")
     
     # Save feature importance
     importance_path = output_dir / "feature_importance.csv"
     feature_importance_df.to_csv(importance_path, index=False)
-    print(f"   ✓ Feature importance saved: {importance_path}")
+    print(f"    Feature importance saved: {importance_path}")
     
     # Save model performance metrics
     metrics = {
@@ -521,7 +521,7 @@ def train_random_forest_model(ml_df, features, test_size=0.2, random_state=42):
     metrics_df = pd.DataFrame([metrics])
     metrics_path = output_dir / "model_metrics.csv"
     metrics_df.to_csv(metrics_path, index=False)
-    print(f"   ✓ Model metrics saved: {metrics_path}")
+    print(f"    Model metrics saved: {metrics_path}")
     
     # Save predictions for analysis
     predictions_df = pd.DataFrame({
@@ -539,7 +539,7 @@ def train_random_forest_model(ml_df, features, test_size=0.2, random_state=42):
     
     predictions_path = output_dir / "test_predictions.csv"
     predictions_df.to_csv(predictions_path, index=False)
-    print(f"   ✓ Test predictions saved: {predictions_path}")
+    print(f"    Test predictions saved: {predictions_path}")
     
     # ====================================================
     # GENERATE INSIGHTS AND RECOMMENDATIONS
@@ -548,23 +548,23 @@ def train_random_forest_model(ml_df, features, test_size=0.2, random_state=42):
     print("STEP 4: GENERATING INSIGHTS & RECOMMENDATIONS")
     print("=" * 60)
     
-    print("\n🔍 TOP INSIGHTS:")
+    print("\n TOP INSIGHTS:")
     print(f"   1. Strongest predictor: {strongest_feature['feature']}")
     print(f"   2. Model can predict failures with {accuracy_score(y_test, y_pred)*100:.1f}% accuracy")
     print(f"   3. Top 3 features account for {feature_importance_df.head(3)['importance'].sum()/importances.sum()*100:.1f}% of predictive power")
     
-    print("\n🎯 POTENTIAL FAILURE CAUSES & NEXT STEPS:")
+    print("\n POTENTIAL FAILURE CAUSES & NEXT STEPS:")
     
     # Analyze feature patterns for failures
     failure_samples = ml_df[ml_df['failure_next_7d'] == 1]
     if len(failure_samples) > 0:
-        print(f"\n📊 ANALYSIS OF {len(failure_samples)} FAILURE SAMPLES:")
+        print(f"\n ANALYSIS OF {len(failure_samples)} FAILURE SAMPLES:")
         
         # Battery-related failures
         battery_failures = failure_samples[failure_samples['battery_level'] < 30]
         if len(battery_failures) > 0:
             avg_battery = battery_failures['battery_level'].mean()
-            print(f"   🔋 Battery-related failures: {len(battery_failures)}")
+            print(f"    Battery-related failures: {len(battery_failures)}")
             print(f"      • Average battery level: {avg_battery:.1f}%")
             print(f"      • Recommendation: Proactive battery replacement at 40% threshold")
         
@@ -572,7 +572,7 @@ def train_random_forest_model(ml_df, features, test_size=0.2, random_state=42):
         temp_failures = failure_samples[failure_samples['LineTemperature_val'] > 70]
         if len(temp_failures) > 0:
             avg_temp = temp_failures['LineTemperature_val'].mean()
-            print(f"   🔥 Temperature-related failures: {len(temp_failures)}")
+            print(f"    Temperature-related failures: {len(temp_failures)}")
             print(f"      • Average temperature: {avg_temp:.1f}°C")
             print(f"      • Recommendation: Thermal inspection for devices >65°C")
         
@@ -580,12 +580,12 @@ def train_random_forest_model(ml_df, features, test_size=0.2, random_state=42):
         age_failures = failure_samples[failure_samples['device_age_months'] > 36]
         if len(age_failures) > 0:
             avg_age = age_failures['device_age_months'].mean()
-            print(f"   📅 Age-related failures: {len(age_failures)}")
+            print(f"    Age-related failures: {len(age_failures)}")
             print(f"      • Average device age: {avg_age:.1f} months")
             print(f"      • Recommendation: Scheduled replacement at 3-year mark")
     
-    print("\n✅ ML PIPELINE COMPLETE!")
-    print(f"📁 Results saved in: {output_dir}")
+    print("\n ML PIPELINE COMPLETE!")
+    print(f" Results saved in: {output_dir}")
     
     return pipeline, feature_importance_df, predictions_df
 
@@ -601,7 +601,7 @@ def run_ml_pipeline(time_series_path=None):
     ml_df, features = prepare_ml_dataset(time_series_path)
     
     if ml_df is None or len(ml_df) < 100:
-        print("\n❌ Insufficient data for ML training. Need at least 100 samples.")
+        print("\n Insufficient data for ML training. Need at least 100 samples.")
         print("   Please ensure you have processed daily time series data first.")
         return
     
@@ -623,7 +623,7 @@ def run_ml_pipeline(time_series_path=None):
         "comm_age_days": "Investigate devices offline >3 days immediately"
     }
     
-    print("\n📋 RECOMMENDED ACTIONS BASED ON ML INSIGHTS:")
+    print("\n RECOMMENDED ACTIONS BASED ON ML INSIGHTS:")
     for feature, recommendation in recommendations.items():
         if feature in importance_df['feature'].values:
             importance = importance_df[importance_df['feature'] == feature]['importance'].values[0]
@@ -631,7 +631,7 @@ def run_ml_pipeline(time_series_path=None):
             print(f"   #{rank:2d} {feature:25s} (importance: {importance:.3f})")
             print(f"      → {recommendation}")
     
-    print(f"\n🎯 KEY TAKEAWAY: Focus on monitoring {strongest_feature} as primary indicator")
+    print(f"\n KEY TAKEAWAY: Focus on monitoring {strongest_feature} as primary indicator")
     
     return model, importance_df, predictions
 

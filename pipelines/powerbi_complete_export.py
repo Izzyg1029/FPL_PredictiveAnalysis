@@ -14,7 +14,7 @@ def create_complete_powerbi_export():
     output_dir.mkdir(exist_ok=True)
     
     print("=" * 60)
-    print("📊 CREATING SINGLE POWER BI EXPORT FILE")
+    print(" CREATING SINGLE POWER BI EXPORT FILE")
     print("=" * 60)
     
     # ====================================================
@@ -24,16 +24,16 @@ def create_complete_powerbi_export():
     profiles_file = project_root / "data" / "processed" / "time_series" / "all_device_profiles_summary.csv"
     if profiles_file.exists():
         df = pd.read_csv(profiles_file, low_memory=False)
-        print(f"✅ Loaded: {len(df):,} devices")
+        print(f"Loaded: {len(df):,} devices")
     else:
-        print("❌ File not found")
+        print(" File not found")
         return
     
     # ====================================================
     # 2. ADD A FEW USEFUL COLUMNS
     # ====================================================
     
-    print("📊 Adding useful columns...")
+    print(" Adding useful columns...")
     
     # Battery level categories
     if 'battery_current' in df.columns:
@@ -71,25 +71,25 @@ def create_complete_powerbi_export():
     # 3. SAVE - ONLY ONE FILE!
     # ====================================================
     
-    print("\n💾 Saving ONE file...")
+    print("\n Saving ONE file...")
     
     # Save with timestamp
     timestamp = pd.Timestamp.now().strftime('%Y%m%d_%H%M%S')
     output_file = output_dir / f"powerbi_export_{timestamp}.csv"
     df.to_csv(output_file, index=False)
-    print(f"✅ Created: {output_file}")
+    print(f" Created: {output_file}")
     
     # Also save as latest (overwrites previous)
     latest_file = output_dir / "powerbi_export_latest.csv"
     df.to_csv(latest_file, index=False)
-    print(f"✅ Created: {latest_file}")
+    print(f" Created: {latest_file}")
     
     # ====================================================
     # 4. SUMMARY
     # ====================================================
     
     print("\n" + "=" * 60)
-    print("✅ DONE - ONE FILE CREATED")
+    print("DONE - ONE FILE CREATED")
     print("=" * 60)
     print(f"\nFile: {latest_file}")
     print(f"Devices: {len(df):,}")

@@ -1,4 +1,4 @@
-# pipelines/process_daily_time_series.py (ALL DEVICES VERSION)
+# pipelines/process_daily_time_series.py (ALL DEVICES VERSION) - NO EMOJIS
 import pandas as pd
 import numpy as np
 from pathlib import Path
@@ -15,9 +15,9 @@ sys.path.insert(0, str(project_root))
 
 try:
     from feature_health import build_health_features
-    print("✅ Successfully imported health_features module")
+    print("Successfully imported health_features module")
 except ImportError as e:
-    print(f"❌ Failed to import health_features: {e}")
+    print(f"Failed to import health_features: {e}")
     sys.exit(1)
 
 def extract_zip_files(raw_dir):
@@ -29,14 +29,14 @@ def extract_zip_files(raw_dir):
     if not zip_files:
         return 0
     
-    print(f"\n📦 Found {len(zip_files)} ZIP file(s):")
+    print(f"\nFound {len(zip_files)} ZIP file(s):")
     for zf in zip_files:
-        print(f"   • {zf.name}")
+        print(f"   - {zf.name}")
     
     extracted_count = 0
     
     for zip_file in zip_files:
-        print(f"\n   📦 Extracting: {zip_file.name}")
+        print(f"\n   Extracting: {zip_file.name}")
         try:
             with zipfile.ZipFile(zip_file, 'r') as zf:
                 # Get list of files in ZIP
@@ -85,13 +85,13 @@ def extract_zip_files(raw_dir):
                             except:
                                 pass
                     
-                    print(f"      ✓ Extracted: {filename}")
+                    print(f"      Extracted: {filename}")
                     extracted_count += 1
                 
-                print(f"   ✅ Successfully extracted {len(csv_excel_files)} files from {zip_file.name}")
+                print(f"   Successfully extracted {len(csv_excel_files)} files from {zip_file.name}")
                 
         except Exception as e:
-            print(f"      ❌ Error extracting {zip_file.name}: {str(e)[:100]}")
+            print(f"      Error extracting {zip_file.name}: {str(e)[:100]}")
     
     return extracted_count
 
@@ -254,7 +254,7 @@ def create_device_profiles(time_series_df):
     
     # Ensure we have the time series data
     if len(time_series_df) == 0:
-        print("❌ No time series data available for device profiles")
+        print("No time series data available for device profiles")
         return None
     
     device_profiles = []
@@ -566,10 +566,10 @@ def create_device_profiles(time_series_df):
         profiles_df = profiles_df.sort_values(['Device_Type_Standardized', 'risk_score_current'], 
                                               ascending=[True, False])
     
-    print(f"✅ Created profiles for {len(profiles_df)} devices")
+    print(f"Created profiles for {len(profiles_df)} devices")
     
     # Show device type distribution
-    print(f"\n📊 DEVICE TYPE DISTRIBUTION:")
+    print(f"\nDEVICE TYPE DISTRIBUTION:")
     type_counts = profiles_df['Device_Type_Standardized'].value_counts()
     for dev_type, count in type_counts.items():
         percentage = (count / len(profiles_df)) * 100
@@ -681,7 +681,7 @@ def process_daily_time_series():
     
     extracted_count = extract_zip_files(RAW_DAILY_DIR)
     if extracted_count > 0:
-        print(f"\n✅ Extracted {extracted_count} files from ZIP archives")
+        print(f"\nExtracted {extracted_count} files from ZIP archives")
     
     # STEP 2: Load install dates
     print("\n" + "=" * 50)
@@ -691,34 +691,34 @@ def process_daily_time_series():
     install_file = project_root / "data" / "clean" / "install_dates.csv"
     if install_file.exists():
         install_df = pd.read_csv(install_file)
-        print(f"📅 Loaded {len(install_df)} install records")
+        print(f"Loaded {len(install_df)} install records")
     else:
         install_df = None
-        print("⚠️  No install dates file found - device age features will be limited")
+        print("No install dates file found - device age features will be limited")
     
     # STEP 3: Find all CSV and Excel files
     print("\n" + "=" * 50)
     print("STEP 3: FINDING DATA FILES")
     print("=" * 50)
     
-    print(f"📁 Looking for files in: {RAW_DAILY_DIR}")
+    print(f"Looking for files in: {RAW_DAILY_DIR}")
     
     # Get all CSV and Excel files (including those extracted from ZIPs)
     excel_files = sorted(RAW_DAILY_DIR.glob("*.xlsx")) + sorted(RAW_DAILY_DIR.glob("*.xls"))
     csv_files = sorted(RAW_DAILY_DIR.glob("*.csv"))
     daily_files = list(excel_files) + list(csv_files)
     
-    print(f"📁 Found {len(daily_files)} data files ready for processing")
+    print(f"Found {len(daily_files)} data files ready for processing")
     
     # Show what files were found
     if daily_files:
         print("\n   Files to process:")
         for f in daily_files[:10]:  # Show first 10 files
-            print(f"   • {f.name}")
+            print(f"   - {f.name}")
         if len(daily_files) > 10:
             print(f"   ... and {len(daily_files) - 10} more")
     else:
-        print("❌ No data files found!")
+        print("No data files found!")
         print(f"   Check path: {RAW_DAILY_DIR}")
         print(f"   Supported formats: .csv, .xlsx, .xls, or .zip containing these formats")
         return
@@ -744,32 +744,32 @@ def process_daily_time_series():
             # Load data based on file type
             if daily_file.suffix.lower() in ['.xlsx', '.xls']:
                 df_daily = pd.read_excel(daily_file)
-                print(f"   📊 Loaded Excel file: {len(df_daily)} rows")
+                print(f"   Loaded Excel file: {len(df_daily)} rows")
             else:  # .csv
                 df_daily = pd.read_csv(daily_file)
-                print(f"   📊 Loaded CSV file: {len(df_daily)} rows")
+                print(f"   Loaded CSV file: {len(df_daily)} rows")
             
             # Extract date from filename using regex
             date_match = re.search(r'(\d{4}-\d{2}-\d{2})', daily_file.stem)
             if date_match:
                 date_from_filename = date_match.group(1)
-                print(f"   📅 Extracted date: {date_from_filename}")
+                print(f"   Extracted date: {date_from_filename}")
             else:
                 # Fallback: use entire filename stem
                 date_from_filename = daily_file.stem
-                print(f"   ⚠️  Could not extract date from filename, using: {date_from_filename}")
+                print(f"   Could not extract date from filename, using: {date_from_filename}")
             
             # Check if we have Device_Type column
             if 'Device_Type' not in df_daily.columns:
-                print(f"   ⚠️  No 'Device_Type' column, checking for device type in other columns...")
+                print(f"   No 'Device_Type' column, checking for device type in other columns...")
                 type_cols = [col for col in df_daily.columns if 'type' in col.lower() or 'device' in col.lower()]
                 if type_cols:
                     df_daily = df_daily.rename(columns={type_cols[0]: 'Device_Type'})
-                    print(f"   🔧 Renamed '{type_cols[0]}' to 'Device_Type'")
+                    print(f"   Renamed '{type_cols[0]}' to 'Device_Type'")
             
             # Show ALL device types before filtering
             if 'Device_Type' in df_daily.columns:
-                print(f"   📊 ALL Device Types in file:")
+                print(f"   ALL Device Types in file:")
                 counts = df_daily['Device_Type'].value_counts()
                 for dev_type, count in counts.items():
                     percentage = (count / len(df_daily)) * 100
@@ -786,14 +786,14 @@ def process_daily_time_series():
                 if len(df_device) == 0:
                     continue
                 
-                print(f"   🔋 Processing {device_type}: {len(df_device)} devices")
+                print(f"   Processing {device_type}: {len(df_device)} devices")
                 
                 # Check if output already exists
                 device_type_lower = device_type.lower()
                 output_file = DEVICE_TYPE_DIRS[device_type_lower] / f"{date_from_filename}_health_{device_type_lower}.csv"
                 
                 if output_file.exists():
-                    print(f"   ⏭️  Skipping {device_type} - output already exists")
+                    print(f"   Skipping {device_type} - output already exists")
                     continue
                 
                 # Add date column if not present
@@ -810,7 +810,7 @@ def process_daily_time_series():
                     print(f"      Removed {duplicates_removed} duplicate entries")
                 
                 # Build health features
-                print(f"      ⚙️  Building health features...")
+                print(f"      Building health features...")
                 df_health = build_health_features(df_device, install_df)
                 
                 # Ensure date is preserved
@@ -835,16 +835,16 @@ def process_daily_time_series():
                     'processed': True
                 })
                 
-                print(f"      ✅ Saved {device_type} file: {output_file.name}")
-                print(f"      📈 Generated {len(df_health.columns)} health features")
+                print(f"      Saved {device_type} file: {output_file.name}")
+                print(f"      Generated {len(df_health.columns)} health features")
             
             # Save combined file for all devices from this day
             clean_all_file = DEVICE_TYPE_DIRS['all'] / f"{date_from_filename}_health_all_devices.csv"
             df_daily.to_csv(clean_all_file, index=False)
-            print(f"   ✅ Saved all devices file: {clean_all_file.name}")
+            print(f"   Saved all devices file: {clean_all_file.name}")
             
         except Exception as e:
-            print(f"   ❌ Error processing {daily_file.name}: {str(e)[:100]}...")
+            print(f"   Error processing {daily_file.name}: {str(e)[:100]}...")
             import traceback
             traceback.print_exc()
             processing_stats.append({
@@ -873,7 +873,7 @@ def process_daily_time_series():
             combined_df.to_csv(raw_ts_file, index=False)
             
             # Add time-based features
-            print(f"   ⏳ Adding time-based features for {device_type.upper()}...")
+            print(f"   Adding time-based features for {device_type.upper()}...")
             combined_df = add_time_based_features(combined_df)
             
             # Get date range for the combined file name
@@ -893,11 +893,11 @@ def process_daily_time_series():
                     combined_df[col] = combined_df[col].fillna('').astype(str)
 
             combined_df.to_csv(enhanced_ts_file, index=False, compression='gzip')
-            print("✅ File saved successfully!")
+            print("File saved successfully!")
 
             time_series_datasets[device_type] = combined_df
             
-            print(f"✅ Created {device_type.upper()} time series: {enhanced_ts_file.name}")
+            print(f"Created {device_type.upper()} time series: {enhanced_ts_file.name}")
             print(f"   Devices: {combined_df['Serial'].nunique()}")
             print(f"   Records: {len(combined_df):,}")
             print(f"   Date range: {min_date} to {max_date}")
@@ -918,7 +918,7 @@ def process_daily_time_series():
     
     if device_profiles is not None:
         # STEP 6.2: Add battery trend analysis for ZM1 devices
-        print("   📈 Adding battery trend analysis...")
+        print("   Adding battery trend analysis...")
         
         # Get ZM1 data for trend analysis
         zm1_data = None
@@ -943,7 +943,7 @@ def process_daily_time_series():
         if zm1_data is not None and len(zm1_data) > 0:
             print(f"   Found {len(zm1_data)} ZM1 records for trend analysis")
             trends_df = calculate_daily_battery_trend(zm1_data)
-            print(f"✅ Battery trend analysis completed for {len(trends_df)} ZM1 devices")
+            print(f"Battery trend analysis completed for {len(trends_df)} ZM1 devices")
         else:
             print("No ZM1 battery data available for trend analysis")
             trends_df = pd.DataFrame()
@@ -976,28 +976,28 @@ def process_daily_time_series():
                 columns_to_save = ['Serial'] + trend_columns_available
                 trend_file = PROCESSED_TS_DIR / "battery_trend_analysis.csv"
                 trends_df[columns_to_save].to_csv(trend_file, index=False)
-                print(f"✅ Power BI trend file: {trend_file.name}")
+                print(f"Power BI trend file: {trend_file.name}")
                 print(f"   Trend metrics saved: {', '.join(trend_columns_available)}")
             else:
-                print("⚠️  No trend columns found in trends DataFrame")
+                print("No trend columns found in trends DataFrame")
         else:
-            print("⚠️  No trend data available for Power BI export")
+            print("No trend data available for Power BI export")
         
         # STEP 6.5: Save device profiles
         profiles_file = PROCESSED_TS_DIR / "all_device_profiles_summary.csv"
         device_profiles.to_csv(profiles_file, index=False)
         
-        print(f"\n✅ Device profiles summary:")
+        print(f"\nDevice profiles summary:")
         print(f"   File: {profiles_file}")
         print(f"   Devices: {len(device_profiles):,}")
         print(f"   Columns: {len(device_profiles.columns)}")
         if trends_df is not None:
             print(f"   Trend data added: {len(trends_df)} devices")
     else:
-        print("❌ Failed to create device profiles")
+        print("Failed to create device profiles")
 
  # Summary
-    print(f"\n📊 ALL-DEVICES SUMMARY:")
+    print(f"\nALL-DEVICES SUMMARY:")
     
     for device_type in ['zm1', 'mm3', 'um3']:
         if device_type in time_series_datasets:
@@ -1014,14 +1014,14 @@ def process_daily_time_series():
             dev_type = stat.get('device_type', 'unknown')
             processed_by_type[dev_type] = processed_by_type.get(dev_type, 0) + 1
     
-    print(f"\n📊 PROCESSING RESULTS:")
+    print(f"\nPROCESSING RESULTS:")
     for dev_type, count in processed_by_type.items():
         print(f"   {dev_type}: {count} days processed")
     
     total_processed = sum(processed_by_type.values()) / 3  # Avoid double counting
     print(f"   Total days processed: {total_processed:.0f}/{len(daily_files)}")
     
-    print(f"\n📁 OUTPUT FILES CREATED:")
+    print(f"\nOUTPUT FILES CREATED:")
     print(f"   Clean daily files in subdirectories of: {CLEAN_DAILY_DIR}")
     print(f"   Time series files in: {PROCESSED_TS_DIR}")
     

@@ -1,0 +1,87 @@
+{
+  "device_type": "ZM1",
+  "rows": 88916,
+  "n_features": 15,
+  "feature_cols": [
+    "DNP_Addr",
+    "Latitude",
+    "Longitude",
+    "LineCurrent",
+    "LineTemperatrue",
+    "ParentId",
+    "BatteryLevel",
+    "days_since_last_report",
+    "battery_low_flag",
+    "offline_flag",
+    "online_flag",
+    "intermittent_flag",
+    "standby_flag",
+    "zero_current_flag",
+    "coord_missing_flag"
+  ],
+  "classes": [
+    0,
+    2,
+    3
+  ],
+  "y_test_counts": {
+    "0": 10763,
+    "3": 7001,
+    "2": 20
+  },
+  "pred_counts": {
+    "0": 10763,
+    "3": 7001,
+    "2": 20
+  },
+  "confusion_matrix": [
+    [
+      10763,
+      0,
+      0
+    ],
+    [
+      0,
+      20,
+      0
+    ],
+    [
+      0,
+      0,
+      7001
+    ]
+  ],
+  "classification_report": {
+    "0": {
+      "precision": 1.0,
+      "recall": 1.0,
+      "f1-score": 1.0,
+      "support": 10763.0
+    },
+    "2": {
+      "precision": 1.0,
+      "recall": 1.0,
+      "f1-score": 1.0,
+      "support": 20.0
+    },
+    "3": {
+      "precision": 1.0,
+      "recall": 1.0,
+      "f1-score": 1.0,
+      "support": 7001.0
+    },
+    "accuracy": 1.0,
+    "macro avg": {
+      "precision": 1.0,
+      "recall": 1.0,
+      "f1-score": 1.0,
+      "support": 17784.0
+    },
+    "weighted avg": {
+      "precision": 1.0,
+      "recall": 1.0,
+      "f1-score": 1.0,
+      "support": 17784.0
+    }
+  }
+}
