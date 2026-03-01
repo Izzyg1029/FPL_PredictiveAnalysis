@@ -95,6 +95,154 @@ def extract_zip_files(raw_dir):
     
     return extracted_count
 
+def calculate_daily_battery_trend(battery_df):
+    """
+    Calculate daily battery drain trends for devices.
+    """
+    import numpy as np
+    import pandas as pd
+    
+    trends = []
+    
+    # Check what date column exists
+    date_col = None
+    for col in ['Date', 'date', 'Last_Heard', 'Last_Heard_dt', 'timestamp', 'observation_date']:
+        if col in battery_df.columns:
+            date_col = col
+            break
+    
+    if date_col is None:
+        print("ERROR: No date column found in battery_df")
+        print(f"Available columns: {battery_df.columns.tolist()}")
+        return pd.DataFrame()
+    
+    print(f"Using '{date_col}' as date column for trend analysis")
+    
+    # ===== CRITICAL FIX: CONVERT DATES TO DATETIME =====
+    battery_df = battery_df.copy()
+    battery_df[date_col] = pd.to_datetime(battery_df[date_col], errors='coerce')
+    
+    # Also check if BatteryLevel column exists
+    if 'BatteryLevel' not in battery_df.columns:
+        print("ERROR: No BatteryLevel column found in battery_df")
+        return pd.DataFrame()
+    
+    processed_count = 0
+    error_count = 0
+    
+    for serial, group in battery_df.groupby('Serial'):
+        if len(group) < 2:
+            continue  # Need at least 2 data points
+            
+        group = group.sort_values(date_col)  # Use the CORRECT column name
+        
+        # Extract dates and battery levels
+        dates = group[date_col].values  # These should now be datetime objects
+        battery_levels = group['BatteryLevel'].values
+        
+        # Skip if dates are invalid
+        if pd.isna(dates[0]) or pd.isna(dates[-1]):
+            error_count += 1
+            continue
+            
+        # Calculate days difference safely
+        try:
+            # Now dates should be datetime objects
+            days_diff = int((dates[-1] - dates[0]) / np.timedelta64(1, 'D'))
+        except (TypeError, AttributeError) as e:
+            error_count += 1
+            print(f"Error calculating days diff for {serial}: {e}")
+            print(f"Date types: {type(dates[0])}, {type(dates[-1])}")
+            print(f"Date values: '{dates[0]}', '{dates[-1]}'")
+            continue
+            
+        if days_diff <= 0:
+            continue  # Invalid time range
+            
+        # Calculate daily drain rate
+        battery_diff = battery_levels[-1] - battery_levels[0]
+        daily_drain_rate = battery_diff / days_diff
+        
+        # Linear regression for trend
+        try:
+            # Convert dates to numeric (days since first date)
+            days_since_start = (dates - dates[0]) / np.timedelta64(1, 'D')
+            slope, intercept = np.polyfit(days_since_start, battery_levels, 1)
+        except:
+            slope, intercept = np.nan, np.nan
+        
+        trend_info = {
+            'Serial': serial,
+            'data_points': len(group),
+            'date_range_days': days_diff,
+            'battery_start': battery_levels[0],
+            'battery_end': battery_levels[-1],
+            'battery_change': battery_diff,
+            'daily_drain_rate': daily_drain_rate,
+            'trend_slope': slope,
+            'trend_intercept': intercept,
+            'first_date': dates[0],
+            'last_date': dates[-1]
+        }
+        
+        trends.append(trend_info)
+        processed_count += 1
+    
+    print(f"\nTrend analysis completed: {processed_count} devices processed, {error_count} errors")
+    
+    return pd.DataFrame(trends)
+
+def _calculate_drain_rate_from_trend(device_data, battery_clean, battery_series):
+    """
+    Calculate battery drain rate from trend data
+    """
+    # Need at least 2 data points
+    if len(battery_clean) < 2:
+        return 0.027  # Default
+    
+    try:
+        valid_indices = battery_clean.index
+        
+        # Convert dates to datetime - FIXED VERSION
+        battery_dates = pd.to_datetime(device_data.loc[valid_indices, 'date'], errors='coerce')
+        
+        # Filter out invalid dates
+        valid_date_mask = battery_dates.notna()
+        if valid_date_mask.sum() < 2:
+            return 0.027  # Not enough valid dates
+        
+        battery_dates = battery_dates[valid_date_mask]
+        battery_clean_filtered = battery_clean[valid_date_mask]
+        
+        # Sort by date
+        sorted_indices = battery_dates.argsort()
+        sorted_dates = battery_dates.iloc[sorted_indices]
+        sorted_battery = battery_clean_filtered.iloc[sorted_indices]
+        
+        # Now dates are datetime objects, this should work
+        days_since_first = (sorted_dates - sorted_dates.iloc[0]).dt.days
+        
+        if days_since_first.iloc[-1] <= 0:
+            return 0.027  # No time difference
+        
+        # Calculate drain rate
+        if len(days_since_first.unique()) > 1:
+            # Linear regression for better accuracy
+            slope, intercept = np.polyfit(days_since_first.values, sorted_battery.values, 1)
+            drain_rate = abs(slope)
+        else:
+            # Simple calculation
+            total_drain = sorted_battery.iloc[-1] - sorted_battery.iloc[0]
+            total_days = days_since_first.iloc[-1]
+            drain_rate = abs(total_drain / total_days) if total_days > 0 else 0.027
+        
+        # Cap at reasonable values (0.001% to 0.5% per day)
+        return max(0.001, min(0.5, drain_rate))
+        
+    except Exception as e:
+        # If any error, return default
+        return 0.027
+    
 def create_device_profiles(time_series_df):
     """
     Create a device summary file for ALL device types (ZM1, MM3, UM3).
@@ -213,56 +361,85 @@ def create_device_profiles(time_series_df):
                 # Clean battery data
                 battery_series = pd.to_numeric(device_data[battery_col], errors='coerce')
                 battery_clean = battery_series[(battery_series >= 0) & (battery_series <= 100)]
-                
+
                 if len(battery_clean) > 0:
                     profile_dict['battery_current'] = battery_clean.iloc[0]
                     profile_dict['battery_min'] = battery_clean.min()
                     profile_dict['battery_max'] = battery_clean.max()
                     profile_dict['battery_avg'] = battery_clean.mean()
                     profile_dict['battery_std'] = battery_clean.std()
-                    
+
                     # Data quality
                     total_readings = len(battery_series)
                     valid_readings = len(battery_clean)
                     profile_dict['battery_data_quality_pct'] = (valid_readings / total_readings * 100) if total_readings > 0 else 0
-                    
-                    # Battery trends
-                    if len(battery_clean) >= 2:
-                        valid_indices = battery_clean.index
-                        battery_dates = pd.to_datetime(device_data.loc[valid_indices, 'date'])
-                        sorted_dates = battery_dates.sort_values()
-                        sorted_battery = battery_clean.loc[sorted_dates.index]
+
+                    # ====GET REAL DRAIN RATES FROM HEALTH FEATURES ======
+            
+                    # OPTION 1: Get from device_data (health features already calculated)
+                    # Check for existing drain rate columns from feature_health.py
+                    drain_rate_found = False
+            
+                    # Try battery_drain_rate_per_day first (daily rate)
+                    if 'battery_drain_rate_per_day' in device_data.columns:
+                        drain_rate = device_data['battery_drain_rate_per_day'].iloc[0]
+                        if pd.notna(drain_rate) and drain_rate > 0:
+                            profile_dict['battery_drain_rate_per_day'] = drain_rate
+                            drain_rate_found = True
+                            print(f"DEBUG {serial}: Using battery_drain_rate_per_day = {drain_rate:.4f}%/day")
+            
+                    # Try battery_drain_rate (yearly rate)
+                    if not drain_rate_found and 'battery_drain_rate' in device_data.columns:
+                        yearly_rate = device_data['battery_drain_rate'].iloc[0]
+                        if pd.notna(yearly_rate) and yearly_rate > 0:
+                            profile_dict['battery_drain_rate_per_day'] = yearly_rate / 365.0
+                            drain_rate_found = True
+                            print(f"DEBUG {serial}: Using battery_drain_rate = {yearly_rate:.1f}%/year -> {yearly_rate/365.0:.4f}%/day")
+            
+                    # OPTION 2: Calculate from trend if health features not available
+                    if not drain_rate_found:
+                        print(f"DEBUG {serial}: Calculating drain rate from trend...")
+                        profile_dict['battery_drain_rate_per_day'] = _calculate_drain_rate_from_trend(
+                            device_data, battery_clean, battery_series
+                            )
                         
-                        days_since_first = (sorted_dates - sorted_dates.iloc[0]).dt.days
-                        
-                        if days_since_first.iloc[-1] > 0:
-                            if len(days_since_first.unique()) > 1:
-                                slope, intercept = np.polyfit(days_since_first, sorted_battery.values, 1)
-                                profile_dict['battery_drain_rate_per_day'] = abs(slope)
-                            else:
-                                total_drain = sorted_battery.iloc[-1] - sorted_battery.iloc[0]
-                                total_days = days_since_first.iloc[-1]
-                                profile_dict['battery_drain_rate_per_day'] = abs(total_drain / total_days)
-                            
-                            # Cap unrealistic values
-                            profile_dict['battery_drain_rate_per_day'] = max(0.001, min(0.1, 
-                                profile_dict.get('battery_drain_rate_per_day', 0.027)))
-                            
-                            # Days until critical
-                            if profile_dict['battery_current'] > 20:
-                                days_to_20 = (profile_dict['battery_current'] - 20) / profile_dict['battery_drain_rate_per_day']
-                                profile_dict['days_until_battery_critical'] = max(0, days_to_20)
-                            else:
-                                profile_dict['days_until_battery_critical'] = 0
-                            
-                            # Expected battery life
-                            profile_dict['expected_battery_life_days'] = profile_dict['battery_current'] / profile_dict['battery_drain_rate_per_day']
-                            profile_dict['expected_battery_life_years'] = profile_dict['expected_battery_life_days'] / 365
-                        
-                        # Count low/warning days
-                        profile_dict['battery_low_days_count'] = (battery_clean < 20).sum()
-                        profile_dict['battery_warning_days_count'] = (battery_clean < 30).sum()
-        
+            
+                    # ====== CALCULATE DAYS UNTIL CRITICAL ======
+                    current_battery = profile_dict['battery_current']
+                    daily_drain = profile_dict.get('battery_drain_rate_per_day', 0.027)
+            
+                    if current_battery > 20 and daily_drain > 0.0001:
+                        days_to_20 = (current_battery - 20) / daily_drain
+                        profile_dict['days_until_battery_critical'] = max(0, days_to_20)
+                    else:
+                        profile_dict['days_until_battery_critical'] = 0
+            
+                    # Expected battery life
+                    if daily_drain > 0.0001:
+                        profile_dict['expected_battery_life_days'] = current_battery / daily_drain
+                        profile_dict['expected_battery_life_years'] = profile_dict['expected_battery_life_days'] / 365
+                    else:
+                        profile_dict['expected_battery_life_days'] = float('inf')
+                        profile_dict['expected_battery_life_years'] = float('inf')
+                    # Count low/warning days
+                    profile_dict['battery_low_days_count'] = (battery_clean < 20).sum()
+                    profile_dict['battery_warning_days_count'] = (battery_clean < 30).sum()
+
+                else:
+                    # No valid battery readings
+                    profile_dict['battery_current'] = np.nan
+                    profile_dict['battery_drain_rate_per_day'] = 0.027  # Default
+                    profile_dict['days_until_battery_critical'] = 0
+                    profile_dict['expected_battery_life_days'] = float('inf')
+                    profile_dict['expected_battery_life_years'] = float('inf')
+            else:
+                # No battery column found
+                profile_dict['battery_current'] = np.nan
+                profile_dict['battery_drain_rate_per_day'] = 0.027  # Default
+                profile_dict['days_until_battery_critical'] = 0
+                profile_dict['expected_battery_life_days'] = float('inf')
+                profile_dict['expected_battery_life_years'] = float('inf')
+
         # MM3: Current and temperature analysis
         elif standardized_type == 'MM3':
             # Current analysis
@@ -305,6 +482,7 @@ def create_device_profiles(time_series_df):
                     
                     # Overheat days
                     profile_dict['overheat_days'] = (temp_clean > 85).sum()
+            
             profile_dict['battery_current'] = None
 
         # UM3: Communication analysis only
@@ -398,6 +576,75 @@ def create_device_profiles(time_series_df):
         print(f"   {dev_type}: {count} devices ({percentage:.1f}%)")
     
     return profiles_df
+
+def add_time_based_features(df):
+    """Add time-based features to the time series for all device types."""
+    df = df.copy()
+    
+    # Ensure sorted by device and date
+    df = df.sort_values(['Serial', 'date'])
+    
+    # Determine device type if not already standardized
+    if 'Device_Type_Standardized' not in df.columns:
+        # Create standardized device type
+        def standardize_device_type(dev_type):
+            dev_type = str(dev_type).upper()
+            if 'ZM1' in dev_type:
+                return 'ZM1'
+            elif 'UM3' in dev_type:
+                return 'UM3'
+            elif 'MM3' in dev_type:
+                return 'MM3'
+            else:
+                return 'Unknown'
+        
+        if 'Device_Type' in df.columns:
+            df['Device_Type_Standardized'] = df['Device_Type'].apply(standardize_device_type)
+        else:
+            df['Device_Type_Standardized'] = 'Unknown'
+    
+    # Device-specific calculations
+    for device_type in ['ZM1', 'MM3', 'UM3']:
+        mask = df['Device_Type_Standardized'] == device_type
+        
+        if device_type == 'ZM1':
+            # ZM1: Battery calculations
+            if 'battery_level' in df.columns:
+                df.loc[mask, 'battery_change_1d'] = df.loc[mask].groupby('Serial')['battery_level'].diff()
+                
+                # Rolling averages for battery
+                for window in [3, 7, 14]:
+                    df.loc[mask, f'battery_avg_{window}d'] = df.loc[mask].groupby('Serial')['battery_level'].transform(
+                        lambda x: x.rolling(window=window, min_periods=1).mean()
+                    )
+        
+        elif device_type == 'MM3':
+            # MM3: Current and temperature calculations
+            if 'LineCurrent_val' in df.columns:
+                df.loc[mask, 'current_change_1d'] = df.loc[mask].groupby('Serial')['LineCurrent_val'].diff()
+                
+                # Rolling averages for current
+                for window in [3, 7, 14]:
+                    df.loc[mask, f'current_avg_{window}d'] = df.loc[mask].groupby('Serial')['LineCurrent_val'].transform(
+                        lambda x: x.rolling(window=window, min_periods=1).mean()
+                    )
+            
+            if 'LineTemperature_val' in df.columns:
+                df.loc[mask, 'temp_change_1d'] = df.loc[mask].groupby('Serial')['LineTemperature_val'].diff()
+                
+                # Rolling averages for temperature
+                for window in [3, 7, 14]:
+                    df.loc[mask, f'temp_avg_{window}d'] = df.loc[mask].groupby('Serial')['LineTemperature_val'].transform(
+                        lambda x: x.rolling(window=window, min_periods=1).mean()
+                    )
+    
+    # TEMPORARY FIX: Skip the problematic days_since calculation for now
+    # Just initialize the columns with NaN
+    for flag in ['overheat_flag', 'zero_current_flag', 'battery_low_flag']:
+        if flag in df.columns:
+            df[f'days_since_{flag}'] = np.nan
+    
+    return df
 
 def process_daily_time_series():
     """
@@ -635,8 +882,19 @@ def process_daily_time_series():
             
             # Save enhanced time series with date range in filename
             enhanced_ts_file = PROCESSED_TS_DIR / f"{min_date}_to_{max_date}_health_{device_type}_timeseries.csv"
-            combined_df.to_csv(enhanced_ts_file, index=False)
-            
+            print(f"Saving {len(combined_df):,} rows to {enhanced_ts_file}...")
+
+            # Clean problematic values
+            combined_df = combined_df.replace([np.inf, -np.inf], np.nan)
+
+            # Convert object columns to string
+            for col in combined_df.columns:
+                 if combined_df[col].dtype == object:
+                    combined_df[col] = combined_df[col].fillna('').astype(str)
+
+            combined_df.to_csv(enhanced_ts_file, index=False, compression='gzip')
+            print("✅ File saved successfully!")
+
             time_series_datasets[device_type] = combined_df
             
             print(f"✅ Created {device_type.upper()} time series: {enhanced_ts_file.name}")
@@ -648,53 +906,97 @@ def process_daily_time_series():
     print("\n" + "=" * 50)
     print("STEP 6: CREATING DEVICE PROFILES")
     print("=" * 50)
+
+    # Initialize variables
+    device_profiles = None
+    trends_df = None
+    trend_file = None
     
+    # STEP 6.1: Create device profiles from all data
     if 'all' in time_series_datasets:
         device_profiles = create_device_profiles(time_series_datasets['all'])
+    
+    if device_profiles is not None:
+        # STEP 6.2: Add battery trend analysis for ZM1 devices
+        print("   📈 Adding battery trend analysis...")
         
-        if device_profiles is not None:
-            # Save device profiles
-            profiles_file = PROCESSED_TS_DIR / "all_device_profiles_summary.csv"
-            device_profiles.to_csv(profiles_file, index=False)
+        # Get ZM1 data for trend analysis
+        zm1_data = None
+        
+        # Method 1: Check if we have separate ZM1 dataset
+        if 'zm1' in time_series_datasets:
+            zm1_data = time_series_datasets['zm1']
+            print("   Using separate ZM1 time series data")
+        
+        # Method 2: Filter ZM1 from 'all' dataset
+        elif 'all' in time_series_datasets and 'Device_Type_Standardized' in time_series_datasets['all'].columns:
+            zm1_data = time_series_datasets['all'][time_series_datasets['all']['Device_Type_Standardized'] == 'ZM1']
+            print("   Filtered ZM1 devices from 'all' dataset")
+        
+        # Method 3: Try to filter by device type name
+        elif 'all' in time_series_datasets and 'Device_Type' in time_series_datasets['all'].columns:
+            zm1_mask = time_series_datasets['all']['Device_Type'].str.contains('ZM1', case=False, na=False)
+            zm1_data = time_series_datasets['all'][zm1_mask]
+            print("   Filtered ZM1 devices by Device_Type column")
+        
+        # Calculate trends if we found ZM1 data
+        if zm1_data is not None and len(zm1_data) > 0:
+            print(f"   Found {len(zm1_data)} ZM1 records for trend analysis")
+            trends_df = calculate_daily_battery_trend(zm1_data)
+            print(f"✅ Battery trend analysis completed for {len(trends_df)} ZM1 devices")
+        else:
+            print("No ZM1 battery data available for trend analysis")
+            trends_df = pd.DataFrame()
+        
+        # STEP 6.3: Merge trend data with device profiles
+        if trends_df is not None and len(trends_df) > 0:
+            # Check for common columns to avoid duplicates
+            common_cols = set(device_profiles.columns) & set(trends_df.columns)
+            if common_cols - {'Serial'}:
+                print(f"   Removing duplicate columns before merge: {common_cols - {'Serial'}}")
+                # Keep device_profiles version, drop from trends_df
+                trends_df = trends_df.drop(columns=common_cols - {'Serial'})
             
-            print(f"✅ Device profiles: {profiles_file}")
-            print(f"   Devices summarized: {len(device_profiles):,}")
+            device_profiles = device_profiles.merge(trends_df, on='Serial', how='left')
+            print(f"   Added trend data for {len(trends_df)} devices")
+        else:
+            print("   No trend data to add to device profiles")
+        
+        # STEP 6.4: Save trend data separately for Power BI
+        if trends_df is not None and len(trends_df) > 0:
+            # Check which trend columns exist
+            trend_columns_available = []
+            for col in ['daily_drain_rate', 'trend_slope', 'trend_intercept', 
+                        'battery_change', 'date_range_days', 'battery_start', 
+                        'battery_end', 'data_points']:
+                if col in trends_df.columns:
+                    trend_columns_available.append(col)
             
-            # Show some statistics
-            print(f"\n📊 DEVICE HEALTH DISTRIBUTION:")
-            if 'device_health_status' in device_profiles.columns:
-                status_counts = device_profiles['device_health_status'].value_counts()
-                for status, count in status_counts.items():
-                    percentage = (count / len(device_profiles)) * 100
-                    print(f"   {status}: {count} devices ({percentage:.1f}%)")
-            
-            print(f"\n🔝 TOP 5 HIGH-RISK DEVICES BY TYPE:")
-            for device_type in ['ZM1', 'MM3', 'UM3']:
-                type_devices = device_profiles[device_profiles['Device_Type_Standardized'] == device_type]
-                if len(type_devices) > 0:
-                    high_risk = type_devices.head(5)
-                    print(f"\n   {device_type} Devices:")
-                    for _, device in high_risk.iterrows():
-                        risk = device.get('risk_score_current', 0)
-                        if device_type == 'ZM1':
-                            battery = device.get('battery_current', 'N/A')
-                            print(f"      {device['Serial']}: Risk={risk:.1f}, Battery={battery}%")
-                        elif device_type == 'MM3':
-                            current = device.get('current_current', 'N/A')
-                            temp = device.get('temp_current', 'N/A')
-                            print(f"      {device['Serial']}: Risk={risk:.1f}, Current={current}A, Temp={temp}°C")
-                        else:  # UM3
-                            print(f"      {device['Serial']}: Risk={risk:.1f}")
-    
-    # Save statistics
-    stats_df = pd.DataFrame(processing_stats)
-    stats_file = TIME_SERIES_DIR / "all_devices_processing_stats.csv"
-    stats_df.to_csv(stats_file, index=False)
-    
-    print(f"\n🎉 PIPELINE COMPLETE!")
-    print(f"✅ Processing stats: {stats_file}")
-    
-    # Summary
+            if trend_columns_available:
+                columns_to_save = ['Serial'] + trend_columns_available
+                trend_file = PROCESSED_TS_DIR / "battery_trend_analysis.csv"
+                trends_df[columns_to_save].to_csv(trend_file, index=False)
+                print(f"✅ Power BI trend file: {trend_file.name}")
+                print(f"   Trend metrics saved: {', '.join(trend_columns_available)}")
+            else:
+                print("⚠️  No trend columns found in trends DataFrame")
+        else:
+            print("⚠️  No trend data available for Power BI export")
+        
+        # STEP 6.5: Save device profiles
+        profiles_file = PROCESSED_TS_DIR / "all_device_profiles_summary.csv"
+        device_profiles.to_csv(profiles_file, index=False)
+        
+        print(f"\n✅ Device profiles summary:")
+        print(f"   File: {profiles_file}")
+        print(f"   Devices: {len(device_profiles):,}")
+        print(f"   Columns: {len(device_profiles.columns)}")
+        if trends_df is not None:
+            print(f"   Trend data added: {len(trends_df)} devices")
+    else:
+        print("❌ Failed to create device profiles")
+
+ # Summary
     print(f"\n📊 ALL-DEVICES SUMMARY:")
     
     for device_type in ['zm1', 'mm3', 'um3']:
@@ -722,76 +1024,12 @@ def process_daily_time_series():
     print(f"\n📁 OUTPUT FILES CREATED:")
     print(f"   Clean daily files in subdirectories of: {CLEAN_DAILY_DIR}")
     print(f"   Time series files in: {PROCESSED_TS_DIR}")
+    
+    # Return the time series datasets for potential further use
+    return time_series_datasets, device_profiles  # Optional: return data
 
-def add_time_based_features(df):
-    """Add time-based features to the time series for all device types."""
-    df = df.copy()
-    
-    # Ensure sorted by device and date
-    df = df.sort_values(['Serial', 'date'])
-    
-    # Determine device type if not already standardized
-    if 'Device_Type_Standardized' not in df.columns:
-        # Create standardized device type
-        def standardize_device_type(dev_type):
-            dev_type = str(dev_type).upper()
-            if 'ZM1' in dev_type:
-                return 'ZM1'
-            elif 'UM3' in dev_type:
-                return 'UM3'
-            elif 'MM3' in dev_type:
-                return 'MM3'
-            else:
-                return 'Unknown'
-        
-        if 'Device_Type' in df.columns:
-            df['Device_Type_Standardized'] = df['Device_Type'].apply(standardize_device_type)
-        else:
-            df['Device_Type_Standardized'] = 'Unknown'
-    
-    # Device-specific calculations
-    for device_type in ['ZM1', 'MM3', 'UM3']:
-        mask = df['Device_Type_Standardized'] == device_type
-        
-        if device_type == 'ZM1':
-            # ZM1: Battery calculations
-            if 'battery_level' in df.columns:
-                df.loc[mask, 'battery_change_1d'] = df.loc[mask].groupby('Serial')['battery_level'].diff()
-                
-                # Rolling averages for battery
-                for window in [3, 7, 14]:
-                    df.loc[mask, f'battery_avg_{window}d'] = df.loc[mask].groupby('Serial')['battery_level'].transform(
-                        lambda x: x.rolling(window=window, min_periods=1).mean()
-                    )
-        
-        elif device_type == 'MM3':
-            # MM3: Current and temperature calculations
-            if 'LineCurrent_val' in df.columns:
-                df.loc[mask, 'current_change_1d'] = df.loc[mask].groupby('Serial')['LineCurrent_val'].diff()
-                
-                # Rolling averages for current
-                for window in [3, 7, 14]:
-                    df.loc[mask, f'current_avg_{window}d'] = df.loc[mask].groupby('Serial')['LineCurrent_val'].transform(
-                        lambda x: x.rolling(window=window, min_periods=1).mean()
-                    )
-            
-            if 'LineTemperature_val' in df.columns:
-                df.loc[mask, 'temp_change_1d'] = df.loc[mask].groupby('Serial')['LineTemperature_val'].diff()
-                
-                # Rolling averages for temperature
-                for window in [3, 7, 14]:
-                    df.loc[mask, f'temp_avg_{window}d'] = df.loc[mask].groupby('Serial')['LineTemperature_val'].transform(
-                        lambda x: x.rolling(window=window, min_periods=1).mean()
-                    )
-    
-    # TEMPORARY FIX: Skip the problematic days_since calculation for now
-    # Just initialize the columns with NaN
-    for flag in ['overheat_flag', 'zero_current_flag', 'battery_low_flag']:
-        if flag in df.columns:
-            df[f'days_since_{flag}'] = np.nan
-    
-    return df
 
+# This should be at the OUTERMOST level (no indentation)
 if __name__ == "__main__":
     # Run the updated all-devices pipeline
     process_daily_time_series()

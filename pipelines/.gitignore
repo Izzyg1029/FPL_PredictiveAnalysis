@@ -1,0 +1,29 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.env
+venv/
+env/
+
+# Data files (DON'T push large data!)
+*.csv
+*.xlsx
+*.xls
+*.zip
+data/raw/
+data/clean/
+data/processed/
+
+# Power BI exports (optional - keep if you want)
+# powerbi_exports/
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Logs
+*.log

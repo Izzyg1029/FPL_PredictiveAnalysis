@@ -254,18 +254,31 @@ def add_frequency_features(df: pd.DataFrame) -> pd.DataFrame:
 # ====================================================
 # Device-Specific Risk Scoring (CORRECTED)
 # ====================================================
-
 def compute_zm1_features(df: pd.DataFrame) -> pd.DataFrame:
     """
     Compute health features & risk score for ZM1 devices (battery-powered).
+    ZM1 batteries are designed to last 10 years (3650 days).
     """
     df = df.copy()
 
-    # Battery
-    df["battery_level"] = pd.to_numeric(df.get("BatteryLevel", 100.0), errors="coerce")
+    # Battery level with safe handling
+    df["battery_level"] = pd.to_numeric(df.get("BatteryLevel", np.nan), errors="coerce")
+    
+    # Use NaN for missing values instead of default 100
+    # Devices with no battery reading get NaN
     thresholds = BATTERY_THRESHOLDS.get("ZM1", {"critical": 20, "warning": 30})
-    df["battery_low_flag"] = (df["battery_level"] < thresholds["critical"]).astype(int)
-    df["battery_warning_flag"] = (df["battery_level"] < thresholds["warning"]).astype(int)
+    
+    # Create flags only for devices with battery readings
+    df["battery_low_flag"] = np.where(
+        df["battery_level"].notna(),
+        (df["battery_level"] < thresholds["critical"]).astype(int),
+        0
+    )
+    df["battery_warning_flag"] = np.where(
+        df["battery_level"].notna(),
+        (df["battery_level"] < thresholds["warning"]).astype(int),
+        0
+    )
 
     # Battery report recency
     df["BatteryLatestReport_dt"] = pd.to_datetime(
@@ -301,11 +314,60 @@ def compute_zm1_features(df: pd.DataFrame) -> pd.DataFrame:
     else:
         df["device_age_months"] = 0.0
         
-    # Calculate battery drain rate (% per year)
+    # ===== NON-LINEAR BATTERY DRAIN RATE CALCULATION =====
+    # ZM1 batteries are designed to last 10 years (3650 days)
+    ZM1_DESIGN_LIFETIME_DAYS = 10 * 365  # 3650 days
+    
+    # Calculate battery drain rate with safe division
     if "expected_lifetime_days" in df.columns:
-        df["battery_drain_rate"] = (100.0 / (df["expected_lifetime_days"] / 365.0))  # % per year
+        # Ensure no division by zero - use design lifetime as fallback
+        safe_lifetime = df["expected_lifetime_days"].fillna(ZM1_DESIGN_LIFETIME_DAYS)
+        safe_lifetime = safe_lifetime.clip(lower=365, upper=36500)  # 1 to 100 years
+        
+        # Base yearly rate: 100% divided by lifetime in years
+        base_yearly_rate = 100.0 / (safe_lifetime / 365.0)
+        
+        # Apply non-linear aging curve
+        if "pct_life_used" in df.columns:
+            age_factor = df["pct_life_used"].fillna(0)
+            # Quadratic acceleration: drain increases with age squared
+            aging_multiplier = 1 + (age_factor ** 2) * 2  # 1x to 3x based on age
+        else:
+            aging_multiplier = 1.0
+        
+        # Calculate daily rate with non-linear aging
+        df["battery_drain_rate_per_day"] = (base_yearly_rate / 365.0) * aging_multiplier
+        
+        # For compatibility with existing code (yearly rate)
+        df["battery_drain_rate"] = df["battery_drain_rate_per_day"] * 365.0
+        
     else:
-        df["battery_drain_rate"] = 10.0  # Default: 10% per year for 10-year life
+        # Fallback to 10-year battery design
+        base_yearly_rate = 10.0  # 10% per year for 10-year battery
+        
+        # Apply aging if we have pct_life_used
+        if "pct_life_used" in df.columns:
+            age_factor = df["pct_life_used"].fillna(0)
+            aging_multiplier = 1 + (age_factor ** 2) * 2
+        else:
+            aging_multiplier = 1.0
+            
+        df["battery_drain_rate_per_day"] = (base_yearly_rate / 365.0) * aging_multiplier
+        df["battery_drain_rate"] = base_yearly_rate * aging_multiplier
+    
+    # Ensure minimum positive drain rate to avoid division by zero
+    # Minimum: 0.1% per year (batteries always have SOME self-discharge)
+    MIN_DAILY_DRAIN = 0.1 / 365.0
+    df["battery_drain_rate_per_day"] = df["battery_drain_rate_per_day"].clip(lower=MIN_DAILY_DRAIN)
+    df["battery_drain_rate"] = df["battery_drain_rate"].clip(lower=0.1)
+
+    # Add battery acceleration factor
+    if "pct_life_used" in df.columns:
+        df["aging_acceleration_factor"] = 1 + (df["pct_life_used"] ** 2) * 2
+        df["battery_degradation_factor"] = df["aging_acceleration_factor"]
+    else:
+        df["aging_acceleration_factor"] = 1.0
+        df["battery_degradation_factor"] = 1.0
         
     df["temperature_exceedence_count"] = 0  # ZM1 doesn't measure temp
     
@@ -316,6 +378,8 @@ def compute_zm1_features(df: pd.DataFrame) -> pd.DataFrame:
     
     # Maintenance urgency (age + battery only)
     age_component = (df["device_age_months"] / 120.0).fillna(0).clip(upper=1.0)  # 10 years = 120 months
+    
+    # Normalize battery drain rate (0-1 scale, where 20% per year = 1.0)
     battery_component = (df["battery_drain_rate"] / 20.0).clip(upper=1.0)
     
     df["maintenance_urgency_score"] = (
@@ -324,7 +388,7 @@ def compute_zm1_features(df: pd.DataFrame) -> pd.DataFrame:
     )
     df["maintenance_urgency_score"] = df["maintenance_urgency_score"].clip(upper=1.0).round(3)
     
-    # Risk formula (ZM1)
+    # ===== RISK CALCULATION =====
     risk = (
         0.25 * normalize(df["comm_age_days"], cap=365) +
         0.25 * normalize(df["battery_report_age_days"], cap=180) +
@@ -338,20 +402,24 @@ def compute_zm1_features(df: pd.DataFrame) -> pd.DataFrame:
     risk += np.where(df["pct_life_used"] > 0.9, 20.0, 0.0)  # Old device penalty
     risk += np.where(df["battery_report_age_days"] > 180, 15.0, 0.0)  # Stale battery report
     
-    # Missing data penalties
-    if "Last_Heard_dt" in df.columns:
+    # Missing data penalties - only apply if device should have the data
+    has_last_heard = "Last_Heard_dt" in df.columns
+    has_install_date = "InstallDate_dt" in df.columns
+    has_battery = "BatteryLevel" in df.columns
+    
+    if has_last_heard:
         risk += np.where(df["Last_Heard_dt"].isna(), 30.0, 0.0)
     
-    if "InstallDate_dt" in df.columns:
+    if has_install_date:
         risk += np.where(df["InstallDate_dt"].isna(), 25.0, 0.0)
     
-    if "BatteryLevel" in df.columns:
+    if has_battery:
+        # Only penalize missing battery if device is ZM1 (should have battery)
         risk += np.where(df["BatteryLevel"].isna(), 20.0, 0.0)
     
     df["risk_score_zm1"] = risk.apply(clamp)
     
     return df
-
 
 def compute_um3_features(df: pd.DataFrame) -> pd.DataFrame:
     """
@@ -368,7 +436,7 @@ def compute_um3_features(df: pd.DataFrame) -> pd.DataFrame:
     df["high_current_flag"] = 0
     df["critical_current_flag"] = 0
     df["overheat_flag"] = 0
-    df["battery_level"] = None
+    df["battery_level"] = np.nan
     df["battery_low_flag"] = 0
     df["battery_warning_flag"] = 0
     
@@ -423,7 +491,7 @@ def compute_mm3_features(df: pd.DataFrame) -> pd.DataFrame:
     df["overheat_flag"] = (df["LineTemperature_val"] > TEMP_LIMITS_C["MM3"]).astype(int)  # 85°C
     
     # MM3 has NO battery (line-powered)
-    df["battery_level"] = None  
+    df["battery_level"] = np.nan 
     df["battery_low_flag"] = 0
     df["battery_warning_flag"] = 0
     
@@ -616,7 +684,7 @@ def build_health_features(
     df = add_variance_features(df)
     df = add_frequency_features(df)
 
-    # --- Initialize shared flags & risk columns with defaults ---
+     # --- Initialize shared flags & risk columns with defaults ---
     for col in [
         "battery_level",
         "battery_low_flag",
@@ -631,7 +699,8 @@ def build_health_features(
         "high_offpeak_flag",
         "overheat_flag",
         "device_age_months",
-        "battery_drain_rate",  
+        "battery_drain_rate", 
+        "battery_drain_rate_per_day", 
         "temperature_exceedence_count",
         "age_adjusted_battery_risk",
         "old_and_hot_flag",
@@ -641,7 +710,14 @@ def build_health_features(
         "risk_score_mm3",
     ]:
         if col not in df.columns:
-            df[col] = 0.0 if "flag" not in col else 0
+            if col == "battery_level":
+                df[col] = np.nan  # Use nan instead of 0.0
+            elif col in ["risk_score_zm1", "risk_score_um3", "risk_score_mm3"]:
+                df[col] = 0.0  # Risk scores are floats
+            elif "flag" in col or col == "old_and_hot_flag":
+                df[col] = 0    # Flags are integers
+            else:
+                df[col] = 0.0  # All other numeric columns are floats
 
     # --- Apply additional capping ---
     df["LineTemperature_val"] = df["LineTemperature_val"].clip(upper=100)
@@ -769,7 +845,10 @@ FEATURE_HEALTH_OUTPUT_COLUMNS: List[str] = [
     "device_age_months",
     "expected_lifetime_days",
     "pct_life_used",
-    "battery_drain_rate",
+    "battery_drain_rate",              # Yearly rate
+    "battery_drain_rate_per_day",      # Daily rate (NON-LINEAR)
+    "aging_acceleration_factor",       # NEW: Non-linear aging factor
+    "battery_degradation_factor",      # NEW: Overall degradation factor    
     "temperature_exceedence_count",
     "age_adjusted_battery_risk",
     "old_and_hot_flag",
