@@ -1,10 +1,11 @@
-# run_health_features.py - NO EMOJIS VERSION
+# run_health_features.py - COMPLETE VERSION
 
 import pandas as pd
 from pathlib import Path
 import sys
 import os
 import importlib.util
+import json  # ADD THIS
 
 # Get the absolute path to health_features.py
 project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))  # Go up from pipelines/
@@ -37,9 +38,29 @@ OUT_DIR.mkdir(parents=True, exist_ok=True)
 csv_files = list(CLEAN_DAILY_DIR.glob("*-clean.csv"))
 excel_files = list(CLEAN_DAILY_DIR.glob("*-clean.xlsx"))
 all_files = csv_files + excel_files
-print(f"Found {len(all_files)} clean file(s) to process")
+print(f"Found {len(all_files)} total clean file(s)")
 
-for file in all_files:
+# ===== INCREMENTAL PROCESSING =====
+STATE_FILE = Path(project_root) / "data" / "processed" / "last_processed.json"
+
+def get_processed_files():
+    if STATE_FILE.exists():
+        with open(STATE_FILE) as f:
+            return set(json.load(f).get('processed', []))
+    return set()
+
+def save_processed_files(processed):
+    STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
+    with open(STATE_FILE, 'w') as f:
+        json.dump({'processed': list(processed)}, f)
+
+# Filter to only new files
+processed = get_processed_files()
+files_to_process = [f for f in all_files if f.name not in processed]
+print(f"Processing {len(files_to_process)} NEW files (skipping {len(all_files) - len(files_to_process)} already processed)")
+# ==================================
+
+for file in files_to_process:
     print(f"\n{'='*60}")
     print(f"Processing: {file.name}")
     print(f"{'='*60}")
@@ -49,7 +70,7 @@ for file in all_files:
         if file.suffix.lower() == '.csv':
             df = pd.read_csv(file)
             print(f"   Loaded CSV: {len(df)} rows")
-            print(f"   Columns: {', '.join(df.columns[:5])}...")  # Show first 5 columns
+            print(f"   Columns: {', '.join(df.columns[:5])}...")
 
             # DEBUG: Print all columns to see what we have
             print(f"   All columns: {list(df.columns)}")
@@ -66,7 +87,7 @@ for file in all_files:
             df = pd.read_excel(file)
             print(f"   Loaded Excel: {len(df)} rows")
         
-        print(f"   Columns: {', '.join(df.columns[:5])}...")  # Show first 5 columns
+        print(f"   Columns: {', '.join(df.columns[:5])}...")
         
         # OPTIONAL: Load install dates if available
         install_file = CLEAN_DIR / "install_dates.csv"
@@ -116,12 +137,17 @@ for file in all_files:
                 short_reason = row['risk_reason'][:60] + "..." if len(row['risk_reason']) > 60 else row['risk_reason']
                 print(f"      {row['Serial']} ({row['Device_Type']}): {row['risk_score']:.1f} - {short_reason}")
         
-        # Save to CSV (as shown in your structure)
+        # Save to CSV
         out_file = OUT_DIR / f"{file.stem.replace('-clean','')}-health.csv"
         df_features.to_csv(out_file, index=False)
         
         print(f"\nSaved to: {out_file}")
         print(f"   File size: {out_file.stat().st_size / 1024:.1f} KB")
+        
+        # ===== MARK AS PROCESSED AFTER SUCCESS =====
+        processed.add(file.name)
+        save_processed_files(processed)
+        # ===========================================
         
     except Exception as e:
         print(f"Error processing {file.name}: {e}")
@@ -129,6 +155,6 @@ for file in all_files:
         traceback.print_exc()
 
 print(f"\n{'='*60}")
-print("All files processed!")
+print(f"Processed {len(files_to_process)} new files!")
 print(f"Output directory: {OUT_DIR}")
 print(f"{'='*60}")

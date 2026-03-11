@@ -1,5 +1,5 @@
-# fci_complete_export.py - COMBINED SINGLE EXPORT
-# Creates ONE file: FCI_Device_Health_Export.csv with ALL data
+# fci_complete_export.py 
+# Creates ONE file: FCI_Device_Health_Export.csv 
 
 import pandas as pd
 from pathlib import Path
@@ -7,18 +7,47 @@ import numpy as np
 from datetime import datetime
 import joblib
 
+print("SCRIPT STARTING - If you see this, Python is working")
+import sys
+print(f"Python version: {sys.version}")
+
 # ====================================================
 # CONFIGURATION
 # ====================================================
+
+
 HISTORY_PATH = Path("data/processed/fci_history.parquet")
 MODELS_DIR = Path("models")
-OUTPUT_DIR = Path("powerbi_exports")
+OUTPUT_DIR = Path(__file__).parent.parent / "powerbi_exports"
 LABEL_TO_NAME = {
     0: "NO_ACTION",
     1: "RECONFIGURE",
     2: "RELOCATE",
     3: "REPLACE",
 }
+def check_if_already_ran(output_file):
+    """Check if the export file already exists and when it was created"""
+    if output_file.exists():
+        file_time = datetime.fromtimestamp(output_file.stat().st_mtime)
+        time_diff = datetime.now() - file_time
+        hours = time_diff.total_seconds() / 3600
+        
+        print(f"\n EXPORT FILE ALREADY EXISTS")
+        print(f"   File: {output_file.name}")
+        print(f"   Created: {file_time.strftime('%Y-%m-%d %H:%M:%S')}")
+        print(f"   Age: {hours:.1f} hours ago")
+        print(f"   Size: {output_file.stat().st_size / 1024 / 1024:.1f} MB")
+        
+        if hours < 1:
+            print(f"     File is very recent (<1 hour old)")
+        elif hours < 24:
+            print(f"    File is from today")
+        else:
+            print(f"   File is {hours/24:.1f} days old")
+        
+        response = input("\nDo you want to regenerate the export? (y/n): ")
+        return response.lower() == 'y'
+    return True
 
 def normalize_device_type_value(x):
     """Standardize device type names"""
@@ -56,6 +85,9 @@ def load_model_bundle(device_type: str):
     except:
         return None, None
     return None, None
+    print("\n Loading device history...")
+    df = pd.read_parquet(HISTORY_PATH)
+    print(f"DEBUG: Loaded {len(df):,} rows")
 
 def create_battery_categories(df):
     """Add battery health categories for Power BI"""
@@ -117,18 +149,19 @@ def create_age_categories(df):
     return df
 
 def create_drain_categories(df):
-    """Add drain rate categories"""
-    if 'battery_drain_rate_per_day' in df.columns:
-        expected_rate = 100 / (10 * 365)  # 10-year nominal
+    """Add drain rate categories using yearly rate"""
+    if 'battery_drain_rate' in df.columns:
+        expected_yearly_rate = 10.0  # 10% per year nominal
         
         df['drain_rate_category'] = pd.cut(
-            df['battery_drain_rate_per_day'].fillna(0),
-            bins=[-1, 0.001, expected_rate*0.5, expected_rate, expected_rate*2, expected_rate*5, 100],
+            df['battery_drain_rate'].fillna(0),
+            bins=[-1, 0.1, expected_yearly_rate*0.5, expected_yearly_rate, 
+                  expected_yearly_rate*2, expected_yearly_rate*5, 100],
             labels=['No Drain', 'Very Slow', 'Normal', 'Slightly Fast', 'Fast', 'Very Fast']
         )
         
-        df['is_normal_drain'] = df['battery_drain_rate_per_day'] <= expected_rate * 1.5
-        df['is_fast_drain'] = (df['battery_drain_rate_per_day'] > expected_rate * 1.5)
+        df['is_normal_drain'] = df['battery_drain_rate'] <= expected_yearly_rate * 1.5
+        df['is_fast_drain'] = df['battery_drain_rate'] > expected_yearly_rate * 1.5
     return df
 
 def create_critical_flags(df):
@@ -190,13 +223,87 @@ def add_replacement_dates(df):
                     pass
     return df
 
+def add_ttl_and_age(df):
+    """Add Time-to-Live and device age columns"""
+    print("\n Adding TTL and device age columns...")
+    
+    # Check if we have battery data
+    if 'BatteryLevel' in df.columns:
+        print("   Found battery data - calculating TTL for ZM1 devices")
+        
+        # For ZM1 devices only
+        zm1_mask = df['device_type'] == 'ZM1'
+        
+        # We need a drain rate - use a default or estimate
+        # Typical ZM1 battery drain is about 0.027% per day (10-year life)
+        DEFAULT_DRAIN_RATE = 0.027  # % per day
+        
+        # Create TTL columns
+        df['ttl_days'] = np.nan
+        df.loc[zm1_mask, 'ttl_days'] = df.loc[zm1_mask, 'BatteryLevel'] / DEFAULT_DRAIN_RATE
+        
+        df['ttl_months'] = df['ttl_days'] / 30.44
+        df['ttl_years'] = df['ttl_days'] / 365
+        
+        # TTL categories
+        df['ttl_category'] = np.where(
+            df['ttl_days'] < 30, 'Critical (<1 month)',
+            np.where(df['ttl_days'] < 90, 'Urgent (1-3 months)',
+            np.where(df['ttl_days'] < 180, 'Soon (3-6 months)',
+            np.where(df['ttl_days'] < 365, 'Near (6-12 months)',
+                    'Future (>1 year)')))
+        )
+        print(f"   Added TTL columns for ZM1 devices using default drain rate")
+    else:
+        print("   WARNING: Cannot calculate TTL - missing battery data")
+    
+    # Device age not possible without install dates
+    print("   Note: Device age columns not added (install/first_seen data missing)")
+    
+    return df
+def ensure_risk_scores_in_export(df):
+    """Add risk score columns to export if missing"""
+    print("\n Adding risk scores to export...")
+    
+    if df is None:
+        print("  ERROR: Input dataframe is None")
+        return pd.DataFrame()
+    # Try to load from device profiles
+    profiles_path = Path(__file__).parent.parent / "data" / "processed" / "time_series" / "all_device_profiles_summary.csv"
+    if profiles_path.exists():
+        profiles = pd.read_csv(profiles_path)
+        if 'risk_score_current' in profiles.columns:
+            # Merge risk scores
+            risk_cols = ['Serial', 'risk_score_current', 'risk_reason_current']
+            existing = [c for c in risk_cols if c in profiles.columns]
+            if existing:
+                df = df.merge(profiles[existing], on='Serial', how='left')
+                df.rename(columns={'risk_score_current': 'risk_score', 
+                                  'risk_reason_current': 'risk_reason'}, inplace=True)
+                print(f"  Added risk scores for {df['risk_score'].notna().sum()} devices")
+    
+    # Create risk categories if risk_score exists
+    if 'risk_score' in df.columns:
+        df['risk_category'] = pd.cut(
+            df['risk_score'].fillna(0),
+            bins=[-1, 20, 40, 60, 80, 101],
+            labels=['Low (0-20)', 'Medium (21-40)', 'High (41-60)', 
+                   'Critical (61-80)', 'Emergency (81-100)']
+        )
+        df['is_high_risk'] = df['risk_score'] > 60
+        df['is_critical_risk'] = df['risk_score'] > 80
+    
+    return df
+
+print("DEBUG: Starting main function")
 def main():
     """Main function to create combined export"""
-    
+    print("DEBUG: Entered main function")
     print("=" * 60)
     print(" FCI COMPLETE HEALTH EXPORT - SINGLE FILE")
     print("=" * 60)
     
+    print("DEBUG: Step 1 - Checking HISTORY_PATH")
     # ====================================================
     # 1. LOAD AND PROCESS DEVICE DATA
     # ====================================================
@@ -204,10 +311,12 @@ def main():
     if not HISTORY_PATH.exists():
         raise FileNotFoundError(f"Missing {HISTORY_PATH}. Run pipelines/update_history.py first.")
     
-    print("\n📦 Loading device history...")
+    print("\n Loading device history...")
     df = pd.read_parquet(HISTORY_PATH)
+    print("DEBUG: Step 2 - Loading parquet")
     print(f" Loaded {len(df):,} historical records")
     
+    print("DEBUG: Step 3 - Processing device types")
     # Standardize device types
     if "Device_Type" in df.columns:
         dt = df["Device_Type"]
@@ -223,7 +332,7 @@ def main():
     # Drop missing device types
     before = len(df)
     df = df[df["device_type"].notna()].copy()
-    print(f"🧹 Dropped {before - len(df):,} rows with missing device_type")
+    print(f" Dropped {before - len(df):,} rows with missing device_type")
     
     # Convert dates
     if "BatteryLatestReport" in df.columns:
@@ -237,25 +346,27 @@ def main():
     
     print(f" Latest device records: {len(latest):,} devices")
     
+    # ===== CREATE result VARIABLE =====
+    result = latest.copy()
+    
+    
     # ====================================================
     # 2. ADD POWER BI CATEGORIES
     # ====================================================
-    
     print("\n Adding Power BI categories...")
     
-    result = latest.copy()
     result = create_battery_categories(result)
     result = create_timeline_categories(result)
     result = create_risk_categories(result)
     result = create_age_categories(result)
     result = create_drain_categories(result)
     result = create_critical_flags(result)
-    
+
     # ====================================================
     # 3. ADD ML PREDICTIONS
     # ====================================================
     
-    print("\n🤖 Adding ML predictions...")
+    print("\n Adding ML predictions...")
     
     all_predictions = []
     
@@ -321,9 +432,64 @@ def main():
         result["PredictedActionCode"] = 0
         result["PredictionConfidence"] = 0
         result["PredictionDate"] = datetime.now().strftime('%Y-%m-%d')
+
+    # ====================================================
+    # 3.5 ADD FLAGS FROM PREDICTIONS FILE
+    # ====================================================
+    
+    print("\n Adding action flags from predictions...")
+    
+    # Load the predictions file which contains all the flags
+    predictions_file = OUTPUT_DIR / "predictions_latest.csv"
+    if predictions_file.exists():
+        flags_df = pd.read_csv(predictions_file)
+        print(f" Loaded predictions file with {len(flags_df)} rows")
+        print(f" Columns in predictions file: {flags_df.columns.tolist()}")
+        
+        # Select the flag columns we want to merge
+        flag_cols = ['Serial', 'days_since_last_report', 'battery_low_flag', 
+                     'offline_flag', 'online_flag', 'intermittent_flag', 
+                     'standby_flag', 'zero_current_flag', 'overheat_flag',
+                     'coord_missing_flag']
+        
+        # Only keep columns that exist
+        available_flags = [col for col in flag_cols if col in flags_df.columns]
+        print(f" Available flag columns: {available_flags}")
+        
+        if len(available_flags) > 1:  # At least Serial plus one flag
+            flags_subset = flags_df[available_flags].copy()
+            
+            # Check if Serial column exists in both dataframes
+            if 'Serial' in result.columns and 'Serial' in flags_subset.columns:
+                # Merge flags into result
+                before_cols = len(result.columns)
+                result = result.merge(flags_subset, on="Serial", how="left")
+                after_cols = len(result.columns)
+                
+                print(f" Added {after_cols - before_cols} columns from predictions file")
+                
+                # Verify flags have values
+                for col in available_flags:
+                    if col != 'Serial' and col in result.columns:
+                        if col in ['PredictedActionName', 'PredictedActionLabel']:
+                            non_zero = "N/A"
+                        else:
+                            non_zero = (result[col] > 0).sum() if pd.api.types.is_numeric_dtype(result[col]) else "N/A"
+                        print(f"   {col}: {non_zero} non-zero values")
+            else:
+                print(" ERROR: 'Serial' column missing in one of the dataframes!")
+        else:
+            print(" No flag columns found in predictions file")
+    else:
+        print(" predictions_latest.csv not found - flags will be missing")
+   
+    # ====================================================
+    # 4. ADD RISK SCORES
+    # ====================================================
+    result = ensure_risk_scores_in_export(result)
     
     # ====================================================
-    # 4. ADD REPLACEMENT DATES AND GLOBAL STATS
+    # 5. ADD REPLACEMENT DATES AND GLOBAL STATS
     # ====================================================
     
     print("\n Adding replacement forecasts...")
@@ -331,7 +497,13 @@ def main():
     result = add_global_stats(result)
     
     # ====================================================
-    # 5. ADD METADATA COLUMNS
+    # 6. ADD TTL AND DEVICE AGE COLUMNS
+    # ====================================================
+    
+    result = add_ttl_and_age(result)
+    
+    # ====================================================
+    # 7. ADD METADATA COLUMNS
     # ====================================================
     
     result["ExportDate"] = datetime.now().strftime('%Y-%m-%d')
@@ -339,7 +511,7 @@ def main():
     result["DataSource"] = "FCI Complete Export"
     
     # ====================================================
-    # 6. SAVE SINGLE FILE - EXACTLY AS SPECIFIED
+    # 8. SAVE SINGLE FILE
     # ====================================================
     
     print("\n Saving single export file...")
@@ -349,6 +521,12 @@ def main():
     # Create the EXACT filename specified in the user guide
     output_file = OUTPUT_DIR / "FCI_Device_Health_Export.csv"
     
+
+    # Check if file already exists and ask user
+    if not check_if_already_ran(output_file):
+        print("❌ Export cancelled by user")
+        return
+
     # Save to CSV
     result.to_csv(output_file, index=False)
     print(f" Created: {output_file}")
@@ -360,7 +538,7 @@ def main():
     print(f" Backup: {backup_file}")
     
     # ====================================================
-    # 7. PRINT SUMMARY
+    # 9. PRINT SUMMARY
     # ====================================================
     
     print("\n" + "=" * 60)
@@ -380,14 +558,26 @@ def main():
         print(f"   • Critical (<20%): {(result['battery_current'] < 20).sum():,}")
         print(f"   • Low (20-30%): {((result['battery_current'] >= 20) & (result['battery_current'] < 30)).sum():,}")
     
-    print(f"\n⏰ REPLACEMENT TIMELINE:")
+    print(f"\n REPLACEMENT TIMELINE:")
     if 'days_until_battery_critical' in result.columns:
         print(f"   • Emergency (<7 days): {(result['days_until_battery_critical'] < 7).sum():,}")
         print(f"   • Critical (<30 days): {(result['days_until_battery_critical'] < 30).sum():,}")
         print(f"   • Urgent (<90 days): {(result['days_until_battery_critical'] < 90).sum():,}")
         print(f"   • This year: {(result['days_until_battery_critical'] < 365).sum():,}")
     
-    print(f"\n🤖 ML PREDICTIONS:")
+    print(f"\n TIME-TO-LIVE (TTL):")
+    if 'ttl_days' in result.columns:
+        print(f"   • Average TTL: {result['ttl_days'].mean():.1f} days")
+        print(f"   • Critical (<30 days): {(result['ttl_days'] < 30).sum():,}")
+        print(f"   • Urgent (30-90 days): {((result['ttl_days'] >= 30) & (result['ttl_days'] < 90)).sum():,}")
+    
+    print(f"\n DEVICE AGE:")
+    if 'device_age_days' in result.columns:
+        print(f"   • Average age: {result['device_age_days'].mean():.1f} days")
+        print(f"   • New (<1 year): {(result['device_age_days'] < 365).sum():,}")
+        print(f"   • Old (>5 years): {(result['device_age_days'] > 1825).sum():,}")
+
+    print(f"\n ML PREDICTIONS:")
     if 'PredictedAction' in result.columns:
         action_counts = result['PredictedAction'].value_counts()
         for action, count in action_counts.items():
@@ -408,7 +598,7 @@ def main():
     print("=" * 60)
     print("""
 1. Open Power BI Desktop
-2. Click Home → Get Data → Text/CSV
+2. Click Home  Get Data  Text/CSV
 3. Navigate to: powerbi_exports/FCI_Device_Health_Export.csv
 4. Click Open
 5. Click Load
@@ -421,11 +611,14 @@ The file contains ALL columns needed for:
    • Battery categories
    • Replacement timelines
    • Risk scores
+   • Time-to-Live (TTL) metrics
+   • Device age analytics
 
 To refresh data later:
 1. Run this script again: python fci_complete_export.py
 2. In Power BI, click Refresh on the Home tab
     """)
-
 if __name__ == "__main__":
+    print("DEBUG: About to call main()")
     main()
+    print("DEBUG: main() completed")

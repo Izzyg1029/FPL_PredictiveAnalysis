@@ -27,3 +27,13 @@ data/processed/
 
 # Logs
 *.log
+
+# Large data files
+powerbi_exports/*.csv
+data/raw/daily/*.csv
+data/processed/*.parquet
+models/*.joblib
+
+# Keep the scripts, not the data
+!pipelines/*.py
+!powerbi_exports/*.md

@@ -2,7 +2,22 @@
 import pandas as pd
 import numpy as np
 from typing import Optional, List, Dict
+# Add this with other imports
+import sys
+from pathlib import Path
 
+# Add project root to Python path so it can find the pipelines module
+project_root = Path(__file__).parent.parent
+sys.path.insert(0, str(project_root))
+
+# Now this import will work
+try:
+    from pipelines.reconfigure_tracker import get_reconfigure_attempts
+except ImportError:
+    # Fallback function if tracker not available
+    def get_reconfigure_attempts(serial):
+        return 0
+    print("Note: reconfigure_tracker not found - reconfigure history will not be tracked")
 # ====================================================
 # Configuration (Thresholds, Lifetimes, etc.)
 # ====================================================
@@ -536,85 +551,169 @@ def compute_mm3_features(df: pd.DataFrame) -> pd.DataFrame:
 def explain_risk(row):
     reasons = []
     device_type = str(row.get("Device_Type", "")).upper()
+    
+    # ===== NEW: Get reconfigure history =====
+    reconfigure_count = 0
+    if 'Serial' in row.index and pd.notna(row.get('Serial')):
+        try:
+            reconfigure_count = get_reconfigure_attempts(row['Serial'])
+        except:
+            pass  # Silently fail if tracker not available
+    
+    # Add reconfigure context if there's history
+    if reconfigure_count > 0:
+        if reconfigure_count == 1:
+            reasons.append(f"Reconfigure attempted {reconfigure_count} time")
+        else:
+            reasons.append(f"Reconfigure attempted {reconfigure_count} times")
+        
+        if reconfigure_count >= 2:
+            reasons.append("Multiple reconfigure attempts - consider replacement")
 
     # --- CRITICAL: Missing data checks ---
     if pd.isna(row.get("Last_Heard_dt")) or pd.isna(row.get("Last_Heard")):
         reasons.append("Missing Last_Heard date")
     
-    if pd.isna(row.get("InstallDate_dt")) and pd.isna(row.get("pct_life_used", None)):
-        reasons.append("Missing installation date")
-    
-    # --- Communication gap ---
-    if pd.notna(row.get("comm_age_days", None)):
-        comm_age = row["comm_age_days"]
-        if comm_age > 30:
-            reasons.append(f"CRITICAL: No communication for {comm_age:.0f} days")
-        elif comm_age > 14:
-            reasons.append(f"Long communication gap ({comm_age:.0f} days)")
-        elif comm_age > 7:
-            reasons.append(f"Moderate communication delay ({comm_age:.0f} days)")
-    elif "Missing Last_Heard date" not in reasons:
-        reasons.append("Cannot calculate communication gap")
-    
-    # --- Device age ---
-    if pd.isna(row.get("pct_life_used", None)):
-        if "Missing installation date" not in reasons:
-            reasons.append("Unknown device age (install date missing)")
-    else:
-        if row["pct_life_used"] > 0.9:
-            reasons.append("Device past 90% expected life")
-        elif row["pct_life_used"] > 0.7:
-            reasons.append("Device aging (70%+ life used)")
-    
-    # --- ZM1-specific (Battery only) ---
-    if "ZM1" in device_type:
-        if pd.isna(row.get("BatteryLevel")) and pd.isna(row.get("battery_level", None)):
-            reasons.append("Missing battery data")
-        
-        if row.get("battery_low_flag", 0) == 1:
-            reasons.append("Battery critically low (<20%)")
-        elif row.get("battery_warning_flag", 0) == 1:
-            reasons.append("Battery warning (<30%)")
-        
-        if pd.isna(row.get("battery_report_age_days", None)):
-            reasons.append("Missing battery report date")
-        elif row.get("battery_report_age_days", 0) > 180:
-            reasons.append("Battery report outdated (>6 months)")
-    
-    # --- UM3-specific (Communication only) ---
-    elif "UM3" in device_type:
-        # UM3 measures nothing except communication
-        pass
-    
-    # --- MM3-specific (Current AND Temperature) ---
-    elif "MM3" in device_type:
-        # Check if current data is missing
-        if pd.isna(row.get("LineCurrent_val", None)):
-            reasons.append("Missing current data")
+    # --- GPS/Sensor Issues ---
+    if row.get('gps_jump_flag', 0) == 1:
+        if reconfigure_count == 0:
+            reasons.append("GPS drift detected - reconfigure recommended")
         else:
-            current = row.get("LineCurrent_val", 0.0)
-            if row.get("zero_current_flag", 0) == 1:
-                reasons.append("CRITICAL: Zero current on line-powered device")
-            elif row.get("critical_current_flag", 0) == 1:
-                reasons.append(f"CRITICAL: Current above operating range ({current:.1f}A)")
-            elif row.get("high_current_flag", 0) == 1:
-                reasons.append(f"High current ({current:.1f}A)")
-            elif row.get("low_current_flag", 0) == 1:
-                reasons.append(f"Low current ({current:.1f}A)")
-        
-        # Check if temperature data is missing
-        if pd.isna(row.get("LineTemperature_val", None)):
-            reasons.append("Missing temperature data")
-        elif row.get("overheat_flag", 0) == 1:
-            reasons.append("Over temperature condition (>85°C)")
+            reasons.append("GPS drift persists after reconfigure - hardware issue?")
     
-    # No issues
+    if row.get('coord_missing_flag', 0) == 1:
+        if reconfigure_count == 0:
+            reasons.append("GPS coordinates missing - reconfigure recommended")
+        else:
+            reasons.append("Coordinates still missing after reconfigure")
+    
+    # --- ZM1-specific ---
+    if "ZM1" in device_type:
+        if pd.isna(row.get("BatteryLevel")):
+            if reconfigure_count == 0:
+                reasons.append("Missing battery data - check telemetry")
+            else:
+                reasons.append("Battery data still missing after reconfigure")
+        elif row.get("battery_low_flag", 0) == 1:
+            if reconfigure_count == 0:
+                reasons.append("Battery critically low - reconfigure to verify")
+            else:
+                reasons.append("Battery still low after reconfigure - needs replacement")
+    
+    # --- MM3-specific ---
+    elif "MM3" in device_type:
+        # CRITICAL ISSUES FIRST (highest priority)
+        if row.get("critical_current_flag", 0) == 1:
+            current = row.get("LineCurrent_val", 0)
+            reasons.append(f"CRITICAL: Current {current:.1f}A exceeds max (850A)")
+    
+        # OVERHEATING (should be high priority)
+        elif row.get("overheat_flag", 0) == 1:
+            temp = row.get("LineTemperature_val", 0)
+            if reconfigure_count == 0:
+                reasons.append(f"Overheating ({temp:.1f}°C) - check ventilation")
+            else:
+                reasons.append(f"Still overheating after reconfigure - needs replacement")
+    
+        # Then other current issues
+        elif row.get("high_current_flag", 0) == 1:
+            current = row.get("LineCurrent_val", 0)
+            reasons.append(f"High current ({current:.1f}A) - investigate")
+    
+        elif row.get("low_current_flag", 0) == 1:
+            current = row.get("LineCurrent_val", 0)
+            reasons.append(f"Low current ({current:.1f}A) - check connection")
+    
+        # Zero current (only if no critical issues)
+        if row.get("zero_current_flag", 0) == 1 and len(reasons) == 0:
+            if row.get("online_flag", 0) == 1:
+                if reconfigure_count == 0:
+                    reasons.append("Online but zero current - reconfigure sensor")
+                else:
+                    reasons.append("Still zero current after reconfigure")
+            else:
+                reasons.append("Zero current detected - check connection")
+    
+        # Check off-peak issues (only if no other issues)
+        if row.get("high_offpeak_flag", 0) == 1 and len(reasons) == 0:
+            reasons.append("High current during off-peak - investigate")
+    
+        # Check device age (always add as secondary)
+        if row.get("pct_life_used", 0) > 0.9:
+            years = row.get("device_age_years", row.get("pct_life_used", 0) * 10)
+            age_reason = f"Device past 90% expected life ({years:.1f} years) - plan replacement"
+            if len(reasons) > 0:
+                reasons[0] = reasons[0] + " | " + age_reason
+            else:
+                reasons.append(age_reason)
+        elif row.get("pct_life_used", 0) > 0.7:
+            age_reason = "Device aging (70%+ life used)"
+            if len(reasons) > 0:
+                reasons[0] = reasons[0] + " | " + age_reason
+            else:
+                reasons.append(age_reason)
+    
+    # Check communication issues (add as secondary)
+        comm_age = row.get("comm_age_days", 0)
+        if comm_age > 30:
+            comm_reason = f"No communication for {comm_age:.0f} days"
+            if len(reasons) > 0:
+                reasons[0] = reasons[0] + " | " + comm_reason
+            else:
+                reasons.append(comm_reason)
+        elif comm_age > 14:
+            comm_reason = f"Long communication gap ({comm_age:.0f} days)"
+            if len(reasons) > 0:
+                reasons[0] = reasons[0] + " | " + comm_reason
+            else:
+                reasons.append(comm_reason)
+    
+        # Check missing data (add as secondary)
+        if pd.isna(row.get("LineCurrent_val")):
+            reasons.append("Missing current data")
+        if pd.isna(row.get("LineTemperature_val")):
+            reasons.append("Missing temperature data")
+
+    # --- UM3-specific ---
+    elif "UM3" in device_type or "UM3+" in device_type:
+    # Check communication issues
+        comm_age = row.get("comm_age_days", 0)
+        if comm_age > 30:
+            if reconfigure_count == 0:
+                reasons.append(f"CRITICAL: No communication for {comm_age:.0f} days - reconfigure")
+            else:
+                reasons.append(f"Still no communication after reconfigure - needs replacement")
+        elif comm_age > 14:
+            if reconfigure_count == 0:
+                reasons.append(f"No communication for {comm_age:.0f} days - reconfigure")
+            else:
+                reasons.append(f"Communication issue persists after reconfigure")
+        elif comm_age > 7:
+            reasons.append(f"Communication delay ({comm_age:.0f} days)")
+
+    # Check GPS issues
+        if row.get('gps_jump_flag', 0) == 1:
+            if reconfigure_count == 0:
+                reasons.append("GPS drift detected - reconfigure recommended")
+            else:
+                reasons.append("GPS drift persists after reconfigure")
+    
+        if row.get('coord_missing_flag', 0) == 1:
+            if reconfigure_count == 0:
+                reasons.append("GPS coordinates missing - reconfigure recommended")
+            else:
+                reasons.append("Coordinates still missing after reconfigure")
+    
+        # Check device age
+        if row.get("pct_life_used", 0) > 0.9:
+            reasons.append("Device past 90% expected life - plan replacement")
+
+        # At the VERY end of the function, after all the if/elif blocks:
     if not reasons:
         return "Normal operating conditions"
 
+    # Make sure this returns a string, not None
     return ", ".join(reasons)
-
-
 # ====================================================
 # Main Router
 # ====================================================

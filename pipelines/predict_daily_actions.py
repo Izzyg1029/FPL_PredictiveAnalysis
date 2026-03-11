@@ -5,7 +5,7 @@ import numpy as np
 import joblib
 
 HISTORY_PATH = Path("data/processed/fci_history.parquet")
-MODELS_DIR = Path("models")
+MODELS_DIR = Path("../models")
 OUTPUT_DIR = Path("powerbi_exports")
 
 LABEL_TO_NAME = {
@@ -142,6 +142,16 @@ def main():
         subset["PredictedActionName"] = [LABEL_TO_NAME.get(int(p), "NO_ACTION") for p in preds]
         subset["Confidence"] = probs
 
+        # ===== ADD FLAG COLUMNS =====
+        flag_cols = ['days_since_last_report', 'battery_low_flag', 'offline_flag', 
+                     'online_flag', 'intermittent_flag', 'standby_flag', 
+                     'zero_current_flag', 'coord_missing_flag']
+
+        # Ensure all flag columns exist
+        for col in flag_cols:
+            if col not in subset.columns:
+                subset[col] = 0
+
         predictions.append(subset)
         print(f" Predicted {device_type}: {len(subset):,}")
 
@@ -154,6 +164,7 @@ def main():
     out_path = OUTPUT_DIR / "predictions_latest.csv"
     written = safe_write_csv(result, out_path)
     print(f"Predictions saved to: {written}")
+
 
 if __name__ == "__main__":
     main()

@@ -1,25 +1,24 @@
 #.gitignore is used to prevent generated data files, Python cache files, and temporary Excel artifacts 
 #from being committed to the repository, ensuring a clean and reproducible codebase.#
-# =========================
-# Data files (generated)
-# =========================
-data/raw/
-data/clean/
-data/processed/
-
-# =========================
-# Python cache
-# =========================
+# Python
 __pycache__/
 *.pyc
-*.py[cod]
-*$py.class
-*.so
-.Python
-env/
-venv/
+*.pyo
+*.pyd
+.vscode/
+.idea/
 
-# =========================
-# Excel temp files
-# =========================
-~$*.xlsx
+# Data
+data/raw/
+data/processed/
+data/clean/daily/*.csv
+!data/clean/install_dates.csv
+
+# Exports
+powerbi_exports/*.csv
+!powerbi_exports/.gitkeep
+
+# Virtual Environment
+venv/
+env/
+ENV/
