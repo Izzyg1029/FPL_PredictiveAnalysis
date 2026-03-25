@@ -45,6 +45,7 @@ def main():
     
     # List all scripts with CORRECT filenames
     scripts = [
+        'download_from_drive.py,
         "update_history.py",
         "run_data_quality.py",
         "run_health_features.py", 
