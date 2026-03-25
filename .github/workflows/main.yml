@@ -1,0 +1,38 @@
+name: Scheduled FCI Predictive Analysis
+on:
+  schedule:
+    - cron: '0 14 * * *'   # 10 AM EDT (Mar–Nov)
+    - cron: '0 15 * * *'   # 10 AM EST (Nov–Mar)
+  workflow_dispatch:
+
+jobs:
+  run-pipeline:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check if 10 AM ET
+        run: |
+          HOUR=$(TZ="America/New_York" date +%H)
+          if [ "$HOUR" != "10" ]; then
+            echo "Not 10 AM ET, skipping."
+            exit 0
+          fi
+
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: pip install pandas numpy openpyxl scikit-learn
+
+      - name: Run pipeline
+        run: python pipelines/run_full_pipeline.py
+
+      - name: Upload outputs
+        uses: actions/upload-artifact@v4
+        with:
+          name: pipeline-outputs
+          path: powerbi_exports/
