@@ -34,7 +34,8 @@ def main():
     p.add_argument("--test_size", type=float, default=0.2)
     p.add_argument("--random_state", type=int, default=42)
     p.add_argument("--drop_cols", nargs="*", default=[
-        "Region","Substation","Feeder","Site","Phase","IP_Address","NetworkGroup","Profile_Name","SensorGateway"
+        "Region","Substation","Feeder","Site","Phase","IP_Address","NetworkGroup","Profile_Name","SensorGateway",
+        "device_type_display","device_type_for_display"
     ])
     args = p.parse_args()
 
@@ -53,7 +54,7 @@ def main():
     before = len(df)
     df = df[df[args.device_type_col].notna()].copy()
     if len(df) != before:
-        print(f"🧹 Dropped {before-len(df):,} rows with missing device_type")
+        print(f"Dropped {before-len(df):,} rows with missing device_type")
 
     # normalize types
     df[args.device_type_col] = (
@@ -67,23 +68,34 @@ def main():
     models_dir = Path(args.models_dir)
     models_dir.mkdir(parents=True, exist_ok=True)
 
-    device_types = sorted(df[args.device_type_col].dropna().unique().tolist())
-    print("device types:", device_types)
+    ACTIVE_DEVICE_TYPES = ["MM3", "ZM1"]  # add "UM3+" here when ready
+    all_device_types = sorted(df[args.device_type_col].dropna().unique().tolist())
+    device_types = [d for d in all_device_types if d in ACTIVE_DEVICE_TYPES]
+    print("All device types in data:", all_device_types)
+    print("Training for:", device_types)
 
     for dt in device_types:
         sub = df[df[args.device_type_col] == dt].copy()
 
         # need at least 2 classes
         if sub["action_label"].nunique() < 2:
-            print(f" Skipping {dt}: only one action class present.")
+            print(f"Skipping {dt}: only one action class present.")
             print(sub["action_label"].value_counts())
             continue
 
         X = sub[feature_cols].replace([np.inf, -np.inf], np.nan).fillna(0)
         y = sub["action_label"].astype(int)
 
+        # Only stratify if every class has at least 2 members (required for split)
+        class_counts = y.value_counts()
+        can_stratify = (class_counts >= 2).all()
+        if not can_stratify:
+            print(f"  Warning: some classes have <2 members for {dt} - skipping stratification")
+            print(f"  Class counts: {class_counts.to_dict()}")
+
         X_train, X_test, y_train, y_test = train_test_split(
-            X, y, test_size=args.test_size, random_state=args.random_state, stratify=y
+            X, y, test_size=args.test_size, random_state=args.random_state,
+            stratify=y if can_stratify else None
         )
 
         rf = RandomForestClassifier(
