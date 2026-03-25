@@ -1,22 +1,13 @@
 name: Scheduled FCI Predictive Analysis
 on:
   schedule:
-    - cron: '0 14 * * *'   # 10 AM EDT (Mar–Nov)
-    - cron: '0 15 * * *'   # 10 AM EST (Nov–Mar)
+    - cron: '0 * * * *'   # Every hour
   workflow_dispatch:
 
 jobs:
   run-pipeline:
     runs-on: ubuntu-latest
     steps:
-      - name: Check if 10 AM ET
-        run: |
-          HOUR=$(TZ="America/New_York" date +%H)
-          if [ "$HOUR" != "10" ]; then
-            echo "Not 10 AM ET, skipping."
-            exit 0
-          fi
-
       - name: Checkout repo
         uses: actions/checkout@v4
 
