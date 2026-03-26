@@ -5,9 +5,9 @@ import numpy as np
 import joblib
 
 HISTORY_PATH = Path("data/processed/fci_history.parquet")
-MODELS_DIR = Path("models")  # primary per-device models (trained by train_action_models_rf.py)
-PIPELINE_MODELS_DIR = Path("../pipelines/models")  # richer 54-feature pipeline models
-OUTPUT_DIR = Path("powerbi_exports")
+MODELS_DIR = Path("../models")  # root models/ folder
+PIPELINE_MODELS_DIR = Path("models")  # pipelines/models/ - richer 54-feature models
+OUTPUT_DIR = Path("../powerbi_exports")
 
 # Confidence threshold: predictions below this are downgraded to NO_ACTION
 CONFIDENCE_THRESHOLD = 0.95
@@ -15,7 +15,7 @@ CONFIDENCE_THRESHOLD = 0.95
 LABEL_TO_NAME = {
     0: "NO_ACTION",
     1: "RECONFIGURE",
-    2: "RELOCATE",
+    2: "RECONFIGURE",  # was RELOCATE - remapped
     3: "REPLACE",
 }
 
@@ -166,7 +166,7 @@ def recompute_features(subset: pd.DataFrame) -> pd.DataFrame:
 def _rule_based_actions(subset: pd.DataFrame, device_type: str, mask: pd.Series):
     """
     Deterministic 4-class rule assignment for rows selected by `mask`.
-    Priority: RELOCATE > REPLACE > RECONFIGURE > NO_ACTION
+    Priority: REPLACE > RECONFIGURE > NO_ACTION
 
     For devices where reconfigure_count == 0 but comm_age > 90 days we treat
     the situation as an implicit reconfigure failure -- the device has been
@@ -182,19 +182,18 @@ def _rule_based_actions(subset: pd.DataFrame, device_type: str, mask: pd.Series)
     offline    = subset.get("offline_flag",          pd.Series(0, index=subset.index))
     crit_curr  = subset.get("critical_current_flag", pd.Series(0, index=subset.index))
     rc         = subset.get("reconfigure_count",     pd.Series(0, index=subset.index)).fillna(0)
-    hrs        = subset.get("hours_since_reconfigure", pd.Series(999999, index=subset.index)).fillna(999999)
 
-    after_reconf  = mask & (rc >= 1) & (hrs > 48)
+    after_reconf  = mask & (rc >= 1)
     # Treat 90+ days without comms as implicit reconfigure failure
     implicit_fail = mask & (ca > 90)
     actionable    = after_reconf | implicit_fail
 
     if device_type == "MM3":
         relocate = mask & ((actionable & (coord_miss == 1)) | (coord_chg == 1))
-        replace  = mask & ~relocate & actionable & (
+        replace  = mask & actionable & (
             (crit_curr == 1) | (overheat == 1) | (zero_curr == 1) | (ca > 90)
         )
-        reconf   = mask & ~relocate & ~replace & (
+        reconf   = mask & ~replace & (
             (zero_curr == 1) | (overheat == 1) | (crit_curr == 1)
             | (intermt == 1) | (coord_miss == 1)
             | ((ca > 7) & (ca <= 90))
@@ -202,15 +201,15 @@ def _rule_based_actions(subset: pd.DataFrame, device_type: str, mask: pd.Series)
 
     elif device_type == "ZM1":
         relocate = mask & ((coord_miss == 1) & (ca > 14) | (coord_chg == 1))
-        replace  = mask & ~relocate & actionable & ((bat_low == 1) | (ca > 90))
-        reconf   = mask & ~relocate & ~replace & (
+        replace  = mask & actionable & ((bat_low == 1) | (ca > 90))
+        reconf   = mask & ~replace & (
             (coord_miss == 1) | ((ca > 14) & (ca <= 90))
         )
 
     elif device_type == "UM3+":
         relocate = mask & ((actionable & (coord_miss == 1)) | (coord_chg == 1))
-        replace  = mask & ~relocate & actionable & ((offline == 1) | (ca > 90))
-        reconf   = mask & ~relocate & ~replace & (
+        replace  = mask & actionable & ((offline == 1) | (ca > 90))
+        reconf   = mask & ~replace & (
             (offline == 1) | (intermt == 1) | (coord_miss == 1)
             | ((ca > 7) & (ca <= 90))
         )
@@ -221,7 +220,7 @@ def _rule_based_actions(subset: pd.DataFrame, device_type: str, mask: pd.Series)
     actions = pd.Series("NO_ACTION", index=subset.index)
     labels  = pd.Series(0,           index=subset.index)
     actions[reconf]   = "RECONFIGURE"; labels[reconf]   = 1
-    actions[relocate] = "RELOCATE";    labels[relocate] = 2
+    actions[relocate] = "RECONFIGURE"; labels[relocate] = 1  # coord issues -> reconfigure
     actions[replace]  = "REPLACE";     labels[replace]  = 3
     return actions, labels
 
