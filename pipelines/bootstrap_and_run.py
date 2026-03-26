@@ -82,7 +82,6 @@ def bootstrap_history():
 
     # -- Inject reconfigure history from state/reconfigure_attempts.csv ------
     df["reconfigure_count"]        = 0
-    df["hours_since_reconfigure"]  = 999999
     df["reconfigure_attempted"]    = False
     df["last_reconfigure_time"]    = pd.NaT
 
@@ -95,10 +94,6 @@ def bootstrap_history():
         df["reconfigure_count"] = df["Serial"].map(counts).fillna(0).astype(int)
         df["last_reconfigure_time"] = df["Serial"].map(last_t)
         df["reconfigure_attempted"] = df["reconfigure_count"] > 0
-        df["hours_since_reconfigure"] = (
-            (now - pd.to_datetime(df["last_reconfigure_time"], errors="coerce"))
-            .dt.total_seconds() / 3600
-        ).fillna(999999)
         print(f"Injected reconfigure history for "
               f"{(df['reconfigure_count']>0).sum()} devices")
 
