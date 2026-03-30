@@ -102,7 +102,7 @@ def main():
 
     max_timestamp = df[ts_col].max()
     df['timestamp_missing'] = df[ts_col].isna()
-    df[ts_col].fillna(max_timestamp, inplace=True)
+    df[ts_col] = df[ts_col].fillna(max_timestamp)
     print(f"After handling: {df[ts_col].isna().sum()} rows still missing")
 
     if temp_col is not None:
@@ -163,9 +163,9 @@ def main():
     df["action_label"] = 0
 
     print("\n Creating device type masks...")
-    is_zm1 = df["Device_Type"].astype(str).str.strip() == "ZM1"
-    is_mm3 = df["Device_Type"].astype(str).str.strip() == "MM3"
-    is_um3 = df["Device_Type"].astype(str).str.strip() == "UM3+"
+    is_zm1 = df["device_type_display"] == "ZM1"
+    is_mm3 = df["device_type_display"] == "MM3"
+    is_um3 = df["device_type_display"] == "UM3+"
 
     print(f"ZM1 devices: {is_zm1.sum()}")
     print(f"MM3 devices: {is_mm3.sum()}")
