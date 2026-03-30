@@ -1,0 +1,110 @@
+{
+  "device_type": "UM3+",
+  "rows": 67195,
+  "n_features": 54,
+  "feature_cols": [
+    "DNP_Addr",
+    "Latitude",
+    "Longitude",
+    "LineCurrent",
+    "LineTemperature",
+    "ParentId",
+    "BatteryLevel",
+    "comm_age_days",
+    "expected_lifetime_days",
+    "device_age_days",
+    "pct_life_used",
+    "prev_lat",
+    "prev_lon",
+    "distance_drift_m",
+    "gps_jump_flag",
+    "current_variance",
+    "temp_variance",
+    "zero_current_frequency",
+    "overheat_frequency",
+    "comm_fail_frequency",
+    "gps_jump_frequency",
+    "battery_level",
+    "battery_low_flag",
+    "battery_warning_flag",
+    "battery_report_age_days",
+    "LineCurrent_val",
+    "LineTemperature_val",
+    "zero_current_flag",
+    "low_current_flag",
+    "high_current_flag",
+    "critical_current_flag",
+    "high_offpeak_flag",
+    "overheat_flag",
+    "device_age_months",
+    "battery_drain_rate",
+    "battery_drain_rate_per_day",
+    "temperature_exceedence_count",
+    "age_adjusted_battery_risk",
+    "old_and_hot_flag",
+    "maintenance_urgency_score",
+    "risk_score_zm1",
+    "risk_score_um3",
+    "risk_score_mm3",
+    "risk_score",
+    "timestamp_was_missing",
+    "timestamp_missing",
+    "offline_flag",
+    "online_flag",
+    "intermittent_flag",
+    "standby_flag",
+    "coord_missing_flag",
+    "reconfigure_count",
+    "hours_since_reconfigure",
+    "reconfigure_attempted"
+  ],
+  "classes": [
+    0,
+    1
+  ],
+  "y_test_counts": {
+    "0": 7307,
+    "1": 6132
+  },
+  "pred_counts": {
+    "0": 7307,
+    "1": 6132
+  },
+  "confusion_matrix": [
+    [
+      7307,
+      0
+    ],
+    [
+      0,
+      6132
+    ]
+  ],
+  "classification_report": {
+    "0": {
+      "precision": 1.0,
+      "recall": 1.0,
+      "f1-score": 1.0,
+      "support": 7307.0
+    },
+    "1": {
+      "precision": 1.0,
+      "recall": 1.0,
+      "f1-score": 1.0,
+      "support": 6132.0
+    },
+    "accuracy": 1.0,
+    "macro avg": {
+      "precision": 1.0,
+      "recall": 1.0,
+      "f1-score": 1.0,
+      "support": 13439.0
+    },
+    "weighted avg": {
+      "precision": 1.0,
+      "recall": 1.0,
+      "f1-score": 1.0,
+      "support": 13439.0
+    }
+  }
+}

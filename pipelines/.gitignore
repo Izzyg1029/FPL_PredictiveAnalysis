@@ -1,0 +1,39 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.env
+venv/
+env/
+
+# Data files (DON'T push large data!)
+*.csv
+*.xlsx
+*.xls
+*.zip
+data/raw/
+data/clean/
+data/processed/
+
+# Power BI exports (optional - keep if you want)
+# powerbi_exports/
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Logs
+*.log
+
+# Large data files
+powerbi_exports/*.csv
+data/raw/daily/*.csv
+data/processed/*.parquet
+models/*.joblib
+
+# Keep the scripts, not the data
+!pipelines/*.py
+!powerbi_exports/*.md
