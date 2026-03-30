@@ -3,27 +3,25 @@ on:
   schedule:
     - cron: '0 * * * *'   # Every hour
   workflow_dispatch:
-
 jobs:
   run-pipeline:
     runs-on: ubuntu-latest
+    env:
+      CI: true
+      GOOGLE_CREDENTIALS: ${{ secrets.GOOGLE_CREDENTIALS }}
     steps:
       - name: Checkout repo
         uses: actions/checkout@v4
-
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
-
       - name: Install dependencies
-        run: pip install pandas numpy openpyxl scikit-learn
-
+        run: pip install pandas numpy openpyxl scikit-learn joblib pyarrow google-api-python-client google-auth gdown
       - name: Run pipeline
         run: python pipelines/run_full_pipeline.py
-
       - name: Upload outputs
         uses: actions/upload-artifact@v4
         with:
           name: pipeline-outputs
-          path: powerbi_exports/
+          path: powerbi_exports/FCI_Device_Health_Export.csv
