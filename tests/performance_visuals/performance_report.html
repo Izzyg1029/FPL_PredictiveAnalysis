@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>FCI Load Test Performance Report</title>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 20px; background-color: #f5f5f5; }
+        h1 { color: #333; border-bottom: 2px solid #4CAF50; }
+        h2 { color: #555; margin-top: 30px; }
+        .container { max-width: 1200px; margin: 0 auto; background: white; padding: 20px; border-radius: 10px; }
+        table { border-collapse: collapse; width: 100%; margin: 20px 0; }
+        th, td { border: 1px solid #ddd; padding: 12px; text-align: right; }
+        th { background-color: #4CAF50; color: white; text-align: center; }
+        tr:nth-child(even) { background-color: #f2f2f2; }
+        .excellent { color: green; font-weight: bold; }
+        .good { color: blue; font-weight: bold; }
+        .acceptable { color: orange; font-weight: bold; }
+        .poor { color: red; font-weight: bold; }
+        img { max-width: 100%; margin: 20px 0; border: 1px solid #ddd; border-radius: 5px; }
+        .risk-warning { background-color: #ffe6e6; padding: 15px; border-radius: 5px; border-left: 4px solid red; margin: 20px 0; }
+    </style>
+</head>
+<body>
+<div class="container">
+    <h1>FCI Load Test Performance Report</h1>
+    <p><strong>Generated:</strong> 2026-03-30 17:11:55</p>
+    <p><strong>Total Tests Run:</strong> 4</p>
+    <p><strong>Largest Test:</strong> 30,153 devices</p>
+    
+    <h2>Performance Summary Table</h2>
+    <!-- ... your existing table code ... -->
+    
+    <h2>Performance Graphs</h2>
+    <img src="throughput_by_scale.png" alt="Throughput by Scale">
+    <img src="execution_time_by_scale.png" alt="Execution Time by Scale">
+    <img src="performance_dashboard.png" alt="Performance Dashboard">
+    <img src="performance_summary_table.png" alt="Performance Summary Table">
+    
+    <h2>Memory Analysis</h2>
+    <img src="memory_analysis.png" alt="Memory Analysis">
+    
+    <h2>Risk Score Analysis</h2>
+    <img src="risk_score_distribution.png" alt="Risk Score Distribution">
+    
+    <div class="risk-warning">
+        <h3>Why This Matters</h3>
+        <p><strong>Risk Score Interpretation:</strong></p>
+        <ul>
+            <li><strong>0-20 (Low):</strong> Devices are healthy, no action needed</li>
+            <li><strong>21-40 (Medium):</strong> Minor issues, monitor closely</li>
+            <li><strong>41-60 (High):</strong> Significant issues, plan maintenance</li>
+            <li><strong>61-80 (Critical):</strong> Severe issues, immediate attention required</li>
+            <li><strong>81-100 (Emergency):</strong> Device likely failing, replace urgently</li>
+        </ul>
+        <p><strong>Current Fleet Status: MEAN RISK = 71.2</strong></p>
+        <p>⚠️ This indicates widespread device issues requiring maintenance action.</p>
+    </div>
+    
+    <h2>Key Findings</h2>
+    <ul>
+        <li><strong>Best Throughput:</strong> 2780 rec/s</li>
+        <li><strong>Handles 30,153 devices in 14.4 seconds</strong></li>
+        <li><strong>Mean Risk Score:</strong> 71.2 (HIGH - action required)</li>
+    </ul>
+</div>
+</body>
+</html>

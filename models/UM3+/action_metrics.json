@@ -1,0 +1,58 @@
+{
+  "device_type": "UM3+",
+  "rows": 2303,
+  "features": [
+    "DNP_Addr",
+    "Latitude",
+    "Longitude",
+    "LineCurrent",
+    "LineTemperatrue",
+    "parentid",
+    "BatteryLevel",
+    "ParentId",
+    "days_since_last_report",
+    "battery_low_flag",
+    "offline_flag",
+    "intermittent_flag",
+    "standby_flag",
+    "online_flag",
+    "zero_current_flag"
+  ],
+  "confusion_matrix": [
+    [
+      197,
+      0
+    ],
+    [
+      0,
+      264
+    ]
+  ],
+  "classification_report": {
+    "0": {
+      "precision": 1.0,
+      "recall": 1.0,
+      "f1-score": 1.0,
+      "support": 197.0
+    },
+    "1": {
+      "precision": 1.0,
+      "recall": 1.0,
+      "f1-score": 1.0,
+      "support": 264.0
+    },
+    "accuracy": 1.0,
+    "macro avg": {
+      "precision": 1.0,
+      "recall": 1.0,
+      "f1-score": 1.0,
+      "support": 461.0
+    },
+    "weighted avg": {
+      "precision": 1.0,
+      "recall": 1.0,
+      "f1-score": 1.0,
+      "support": 461.0
+    }
+  }
+}

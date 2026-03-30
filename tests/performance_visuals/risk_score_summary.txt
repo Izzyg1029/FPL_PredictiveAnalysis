@@ -1,0 +1,24 @@
+
+RISK SCORE SUMMARY
+============================================================
+Total Devices: 30,153
+Mean Risk Score: 71.2
+Median Risk Score: 81.2
+Std Deviation: 25.9
+
+Risk Categories:
+    Emergency (81-100): 15,380 (51.0%)
+    High (41-60): 6,787 (22.5%)
+    Critical (61-80): 4,672 (15.5%)
+    Low (0-20): 1,903 (6.3%)
+    Medium (21-40): 1,411 (4.7%)
+
+CRITICAL FINDINGS:
+- Mean risk score of 71.2 indicates HIGH overall risk
+- 15,380 devices (51.0%) are in EMERGENCY category
+- 20,052 devices (66.5%) need immediate attention
+
+WHY THIS IS BAD:
+- Risk score > 60: Device likely has multiple issues (overheating, zero current, battery problems)
+- Risk score > 80: Critical failure imminent - immediate action required
+- Mean > 70 indicates widespread issues across the fleet

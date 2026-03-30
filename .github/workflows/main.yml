@@ -1,0 +1,29 @@
+name: Scheduled FCI Predictive Analysis
+on:
+  schedule:
+    - cron: '0 * * * *'   # Every hour
+  workflow_dispatch:
+
+jobs:
+  run-pipeline:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: pip install pandas numpy openpyxl scikit-learn
+
+      - name: Run pipeline
+        run: python pipelines/run_full_pipeline.py
+
+      - name: Upload outputs
+        uses: actions/upload-artifact@v4
+        with:
+          name: pipeline-outputs
+          path: powerbi_exports/
