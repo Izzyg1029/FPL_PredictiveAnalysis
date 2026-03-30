@@ -1,5 +1,4 @@
-# run_full_pipeline.py 
-
+# run_full_pipeline.py
 import subprocess
 import sys
 from pathlib import Path
@@ -43,17 +42,17 @@ def main():
     print("=" * 70)
     print(f"Started at: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     
-    # List all scripts with CORRECT filenames
     scripts = [
-        "download_from_drive.py",
-        "update_history.py",
-        "run_data_quality.py",
-        "run_health_features.py", 
-        "process_daily_time_series.py",
-        "label_actions.py",
-        "train_action_models_rf.py",  
-        "predict_daily_actions.py",   
-        "fci_complete_export.py"
+        "scripts/download_from_drive.py",
+        "scripts/update_history.py",
+        "scripts/run_data_quality.py",
+        "scripts/run_health_features.py",
+        "scripts/process_daily_time_series.py",
+        "scripts/label_actions.py",
+        "scripts/train_action_models_rf.py",
+        "scripts/predict_daily_actions.py",
+        "scripts/fci_complete_export.py",
+        "scripts/upload_to_drive.py",
     ]
     
     total_steps = len(scripts)
