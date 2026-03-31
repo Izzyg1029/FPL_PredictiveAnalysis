@@ -32,7 +32,12 @@ def get_drive_service():
 def get_existing_file_id(service, filename, folder_id):
     """Check if file already exists in the folder"""
     query = f"name='{filename}' and '{folder_id}' in parents and trashed=false"
-    results = service.files().list(q=query, fields="files(id, name)").execute()
+    results = service.files().list(
+        q=query,
+        fields="files(id, name)",
+        supportsAllDrives=True,
+        includeItemsFromAllDrives=True
+    ).execute()
     files = results.get("files", [])
     return files[0]["id"] if files else None
 
@@ -60,7 +65,8 @@ def upload_to_drive():
         print(f" File already exists - updating in place...")
         file = service.files().update(
             fileId=existing_id,
-            media_body=media
+            media_body=media,
+            supportsAllDrives=True
         ).execute()
         print(f" Updated: {file.get('name')} (ID: {file.get('id')})")
     else:
@@ -72,7 +78,8 @@ def upload_to_drive():
         file = service.files().create(
             body=file_metadata,
             media_body=media,
-            fields="id, name"
+            fields="id, name",
+            supportsAllDrives=True
         ).execute()
         print(f" Uploaded: {file.get('name')} (ID: {file.get('id')})")
 
