@@ -23,6 +23,24 @@ import numpy as np
 PREDICTIONS_CSV  = Path("../powerbi_exports/predictions_latest.csv")
 HISTORY_PARQUET  = Path("data/processed/fci_history.parquet")
 RECONFIGURE_CSV  = Path("../state/reconfigure_attempts.csv")
+# Search for install_dates.csv dynamically
+def _find_install_dates() -> Path:
+    script_dir = Path(__file__).resolve().parent
+    base = script_dir.parent
+    candidates = [
+        base / "data" / "clean" / "install_dates.csv",
+        base / "data" / "data" / "clean" / "install_dates.csv",
+        base / "data" / "data" / "data" / "clean" / "install_dates.csv",
+    ]
+    for p in candidates:
+        if p.exists():
+            print(f"  Found install_dates.csv at: {p}")
+            return p
+    print(f"  WARNING: install_dates.csv not found. Searched: {[str(p) for p in candidates]}")
+    return candidates[0]
+
+INSTALL_DATES_CSV = _find_install_dates()  # Serial -> InstallDate
+EXPECTED_LIFETIME_YEARS = 10  # default device lifetime
 
 LABEL_TO_NAME = {0: "NO_ACTION", 1: "RECONFIGURE", 2: "RELOCATE", 3: "REPLACE"}
 
@@ -97,6 +115,31 @@ def bootstrap_history():
         print(f"Injected reconfigure history for "
               f"{(df['reconfigure_count']>0).sum()} devices")
 
+    today = pd.Timestamp.now().normalize()
+
+    # -- Merge install dates and compute age/lifetime features ---------------
+    if INSTALL_DATES_CSV.exists():
+        inst = pd.read_csv(INSTALL_DATES_CSV)
+        inst["InstallDate"] = pd.to_datetime(inst["InstallDate"], errors="coerce")
+        inst = inst.dropna(subset=["InstallDate"])
+        inst_map = inst.set_index("Serial")["InstallDate"].to_dict()
+        df["InstallDate"] = pd.to_datetime(df["Serial"].map(inst_map), errors="coerce")
+        df["device_age_days"] = (today - df["InstallDate"]).dt.days.clip(lower=0)
+        df["device_age_years"] = (df["device_age_days"] / 365).round(2)
+        df["expected_lifetime_days"] = EXPECTED_LIFETIME_YEARS * 365
+        df["pct_life_used"] = (df["device_age_days"] / df["expected_lifetime_days"] * 100).round(1)
+        matched = df["InstallDate"].notna().sum()
+        over90 = (df["pct_life_used"] > 90).sum()
+        print(f"  Install dates matched: {matched:,} devices")
+        print(f"  Devices past 90% lifetime: {over90:,}")
+    else:
+        print(f"  WARNING: install_dates.csv not found at {INSTALL_DATES_CSV}")
+        print(f"  Age-based replacement will not be available")
+        df["device_age_days"] = np.nan
+        df["device_age_years"] = np.nan
+        df["expected_lifetime_days"] = EXPECTED_LIFETIME_YEARS * 365
+        df["pct_life_used"] = np.nan
+
     # -- Ensure required flag columns exist ----------------------------------
     flag_defaults = {
         "battery_low_flag": 0,  "offline_flag": 0,     "online_flag": 0,
@@ -110,7 +153,6 @@ def bootstrap_history():
             df[col] = default
 
     # -- Recompute comm_age_days from raw timestamps --------------------------
-    today = pd.Timestamp.now().normalize()
     ts = None
     for c in ["BatteryLatestReport", "Last_Heard"]:
         if c in df.columns:
