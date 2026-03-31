@@ -5,22 +5,16 @@ import numpy as np
 import joblib
 
 HISTORY_PATH = Path("data/processed/fci_history.parquet")
-MODELS_DIR = Path("../models")  # root models/ folder
-PIPELINE_MODELS_DIR = Path("models")  # pipelines/models/ - richer 54-feature models
+MODELS_DIR = Path("../models")
+PIPELINE_MODELS_DIR = Path("models")
 OUTPUT_DIR = Path("../powerbi_exports")
 
-# Confidence threshold: predictions below this are downgraded to NO_ACTION
 CONFIDENCE_THRESHOLD = 0.95
 
 LABEL_TO_NAME = {
     0: "NO_ACTION",
     1: "RECONFIGURE",
-<<<<<<< HEAD
-    2: "REPLACE",  # Direct replacement after reconfigure fails
-=======
-    2: "RECONFIGURE",  # was RELOCATE - remapped
-    3: "REPLACE",
->>>>>>> 39bfa3e3c6978781f5cebcd85e95f900d5eef7d8
+    2: "REPLACE",
 }
 
 def normalize_device_type_value(x):
@@ -33,7 +27,6 @@ def normalize_device_type_value(x):
         return "MM3"
     if s == "UM3":
         return "UM3+"
-    # fallback detect inside
     s2 = s.replace(" ", "").replace("-", "").replace("_", "").replace("/", "")
     if "ZM1" in s2:
         return "ZM1"
@@ -45,45 +38,30 @@ def normalize_device_type_value(x):
 
 
 def load_model_bundle(device_type: str):
-    """Try pipeline models first (richer features), fall back to base models."""
     for models_dir in [PIPELINE_MODELS_DIR, MODELS_DIR]:
         model_path = models_dir / device_type / "action_rf.joblib"
         if not model_path.exists():
             continue
-
         obj = joblib.load(model_path)
         if isinstance(obj, dict) and "model" in obj and "features" in obj:
             print(f"Loaded model for {device_type} from {models_dir}")
             return obj["model"], obj["features"]
-
-        # fallback for raw estimator
         if hasattr(obj, "predict"):
             feats = list(getattr(obj, "feature_names_in_", []))
             print(f"Loaded raw estimator for {device_type} from {models_dir}")
             return obj, feats if feats else None
-
     return None, None
 
 
 def recompute_features(subset: pd.DataFrame) -> pd.DataFrame:
-    """
-    Recompute key diagnostic features from raw columns at prediction time.
-
-    This is necessary because the stored `days_since_last_report` field is
-    pre-computed relative to an old reference date and arrives as 0 for all
-    rows, making every device look healthy.  We recompute from the raw
-    timestamp columns using today's actual date.
-    """
     today = pd.Timestamp.now().normalize()
 
-    # -- days_since_last_report -----------------------------------------------
     ts_col = next(
         (c for c in ["BatteryLatestReport", "Last_Heard", "LastHeard", "last_heard"] if c in subset.columns),
         None,
     )
     if ts_col:
         ts = pd.to_datetime(subset[ts_col], errors="coerce")
-        # Also check secondary timestamp column and take the later of the two
         ts2_col = next(
             (c for c in ["Last_Heard", "BatteryLatestReport"] if c in subset.columns and c != ts_col),
             None,
@@ -92,14 +70,12 @@ def recompute_features(subset: pd.DataFrame) -> pd.DataFrame:
             ts2 = pd.to_datetime(subset[ts2_col], errors="coerce")
             ts = ts.combine_first(ts2)
         computed_days = (today - ts).dt.days.clip(lower=0)
-        # Always override - the stored value is stale
         subset["days_since_last_report"] = computed_days.fillna(0)
         print(f"days_since_last_report recomputed: mean={computed_days.mean():.0f}d, "
               f">14d: {(computed_days>14).sum()}, >90d: {(computed_days>90).sum()}")
     else:
         print("WARNING: No timestamp column found -- days_since_last_report left as-is")
 
-    # -- coord flags ---------------------------------------------------------
     lat_col = next((c for c in ["Latitude", "lat", "LATITUDE"] if c in subset.columns), None)
     lon_col = next((c for c in ["Longitude", "lon", "LONGITUDE"] if c in subset.columns), None)
 
@@ -111,7 +87,6 @@ def recompute_features(subset: pd.DataFrame) -> pd.DataFrame:
         subset["coord_missing_flag"] = (missing_lat | missing_lon).astype(int)
         print(f"coord_missing_flag recomputed: {subset['coord_missing_flag'].sum()} devices")
 
-        # Detect coordinate drift vs prior reading (per-serial, sorted by timestamp)
         if ts_col:
             sorted_idx = subset.sort_values(ts_col).index
             prev_lat = subset.loc[sorted_idx].groupby("Serial")[lat_col].shift(1)
@@ -140,7 +115,6 @@ def recompute_features(subset: pd.DataFrame) -> pd.DataFrame:
         subset["prev_lat"] = np.nan
         subset["prev_lon"] = np.nan
 
-    # -- battery_low_flag ----------------------------------------------------
     bat_col = next(
         (c for c in ["BatteryLevel", "Battery_Level", "battery_level", "Battery"] if c in subset.columns),
         None,
@@ -151,7 +125,6 @@ def recompute_features(subset: pd.DataFrame) -> pd.DataFrame:
         subset["battery_low_flag"] = subset["battery_low_flag"].fillna(0).astype(int)
         print(f"battery_low_flag recomputed: {subset['battery_low_flag'].sum()} devices")
 
-    # -- status flags (offline/online/intermittent/standby) ------------------
     status_col = next(
         (c for c in ["Status", "status", "DeviceStatus", "Profile_Status"] if c in subset.columns),
         None,
@@ -167,14 +140,6 @@ def recompute_features(subset: pd.DataFrame) -> pd.DataFrame:
 
 
 def _rule_based_actions(subset: pd.DataFrame, device_type: str, mask: pd.Series):
-    """
-    Deterministic 4-class rule assignment for rows selected by `mask`.
-    Priority: REPLACE > RECONFIGURE > NO_ACTION
-
-    For devices where reconfigure_count == 0 but comm_age > 90 days we treat
-    the situation as an implicit reconfigure failure -- the device has been
-    unreachable long enough that a reconfigure attempt is futile.
-    """
     ca         = subset["days_since_last_report"]
     coord_miss = subset.get("coord_missing_flag",    pd.Series(0, index=subset.index))
     coord_chg  = subset.get("coord_changed_flag",    pd.Series(0, index=subset.index))
@@ -187,7 +152,6 @@ def _rule_based_actions(subset: pd.DataFrame, device_type: str, mask: pd.Series)
     rc         = subset.get("reconfigure_count",     pd.Series(0, index=subset.index)).fillna(0)
 
     after_reconf  = mask & (rc >= 1)
-    # Treat 90+ days without comms as implicit reconfigure failure
     implicit_fail = mask & (ca > 90)
     actionable    = after_reconf | implicit_fail
 
@@ -223,16 +187,12 @@ def _rule_based_actions(subset: pd.DataFrame, device_type: str, mask: pd.Series)
     actions = pd.Series("NO_ACTION", index=subset.index)
     labels  = pd.Series(0,           index=subset.index)
     actions[reconf]   = "RECONFIGURE"; labels[reconf]   = 1
-    actions[relocate] = "RECONFIGURE"; labels[relocate] = 1  # coord issues -> reconfigure
-    actions[replace]  = "REPLACE";     labels[replace]  = 3
+    actions[relocate] = "RECONFIGURE"; labels[relocate] = 1
+    actions[replace]  = "REPLACE";     labels[replace]  = 2
     return actions, labels
 
 
 def apply_confidence_threshold(subset: pd.DataFrame, device_type: str) -> pd.DataFrame:
-    """
-    Where model confidence < CONFIDENCE_THRESHOLD, replace the model prediction
-    with a deterministic rule-based action so actionable devices still surface.
-    """
     low_conf = subset["Confidence"] < CONFIDENCE_THRESHOLD
 
     if low_conf.sum() == 0:
@@ -271,7 +231,6 @@ def main():
     if "Serial" not in df.columns:
         raise ValueError("Missing required column: Serial")
 
-    # canonical device types + drop missing
     if "Device_Type" in df.columns:
         dt = df["Device_Type"]
         if "device_type" in df.columns:
@@ -291,7 +250,6 @@ def main():
     if "BatteryLatestReport" in df.columns:
         df["BatteryLatestReport"] = pd.to_datetime(df["BatteryLatestReport"], errors="coerce")
 
-    # latest per Serial
     if "BatteryLatestReport" in df.columns:
         latest = df.sort_values("BatteryLatestReport").drop_duplicates("Serial", keep="last")
     else:
@@ -305,8 +263,7 @@ def main():
 
     predictions = []
 
-    # Only predict for active device types
-    ACTIVE_DEVICE_TYPES = ["MM3", "ZM1"]  # add "UM3+" here when ready
+    ACTIVE_DEVICE_TYPES = ["MM3", "ZM1"]
     all_data_types = latest["device_type"].dropna().unique().tolist()
     data_device_types = [d for d in all_data_types if d in ACTIVE_DEVICE_TYPES]
     skipped = [d for d in all_data_types if d not in ACTIVE_DEVICE_TYPES]
@@ -324,11 +281,9 @@ def main():
             print(f"No rows for {device_type}, skipping")
             continue
 
-        # Recompute all diagnostic features from raw columns before alignment
         print(f"Recomputing features for {device_type}...")
         subset = recompute_features(subset)
 
-        # Build X with exact training features (fill missing with 0)
         for c in feature_cols:
             if c not in subset.columns:
                 subset[c] = 0
@@ -346,10 +301,8 @@ def main():
         subset["Confidence"] = probs
         subset["UsedRuleFallback"] = False
 
-        # Apply confidence threshold -- low-confidence rows get rule-based fallback
         subset = apply_confidence_threshold(subset, device_type)
 
-        # ===== ADD FLAG COLUMNS =====
         flag_cols = [
             "days_since_last_report", "battery_low_flag", "offline_flag",
             "online_flag", "intermittent_flag", "standby_flag",
@@ -362,7 +315,6 @@ def main():
 
         predictions.append(subset)
 
-        # Summary
         action_counts = subset["PredictedActionName"].value_counts().to_dict()
         high_conf = (subset["Confidence"] >= CONFIDENCE_THRESHOLD).sum()
         print(f"Predicted {device_type}: {len(subset):,} | actions={action_counts} | high-conf={high_conf}")
