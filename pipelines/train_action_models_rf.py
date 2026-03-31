@@ -29,7 +29,7 @@ def pick_feature_cols(df: pd.DataFrame, drop_cols: list[str]) -> list[str]:
 def main():
     p = argparse.ArgumentParser()
     p.add_argument("--input", default="data/processed/fci_labeled.parquet")
-    p.add_argument("--device_type_col", default="Device_Type")  # Changed from "device_type"
+    p.add_argument("--device_type_col", default="device_type")  # Changed from "device_type"
     p.add_argument("--models_dir", default="models")
     p.add_argument("--test_size", type=float, default=0.2)
     p.add_argument("--random_state", type=int, default=42)
