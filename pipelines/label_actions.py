@@ -66,6 +66,8 @@ def main():
 
     if "Device_Type" in df.columns:
         df["device_type_display"] = df["Device_Type"].map(normalize_device_type_value)
+    elif "device_type" in df.columns:
+        df["device_type_display"] = df["device_type"].map(normalize_device_type_value)
     else:
         df["device_type_display"] = np.nan
 
@@ -171,6 +173,10 @@ def main():
     print(f"MM3 devices: {is_mm3.sum()}")
     print(f"UM3+ devices: {is_um3.sum()}")
 
+    if 'comm_age_days' not in df.columns:
+        df['comm_age_days'] = 0
+    if 'coord_changed_flag' not in df.columns:
+        df['coord_changed_flag'] = 0
     if 'reconfigure_count' not in df.columns:
         df['reconfigure_count'] = 0
     if 'last_reconfigure_time' not in df.columns:
