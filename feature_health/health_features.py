@@ -159,13 +159,8 @@ def add_frequency_features(df: pd.DataFrame) -> pd.DataFrame:
 # ====================================================
 
 def compute_zm1_features(df: pd.DataFrame) -> pd.DataFrame:
-    """
-    Compute health features & risk score for ZM1 devices (battery-powered).
-    Uses observed battery readings to calculate drain rates, not assumptions.
-    """
     df = df.copy()
 
-    # Battery level with safe handling
     df["battery_level"] = pd.to_numeric(df.get("BatteryLevel", np.nan), errors="coerce")
     
     thresholds = BATTERY_THRESHOLDS.get("ZM1", {"critical": 20, "warning": 30})
@@ -181,7 +176,6 @@ def compute_zm1_features(df: pd.DataFrame) -> pd.DataFrame:
         0
     )
 
-    # Battery report recency
     df["BatteryLatestReport_dt"] = pd.to_datetime(df.get("BatteryLatestReport"), errors="coerce")
     snapshot = df["Last_Heard_dt"].max()
 
@@ -190,7 +184,6 @@ def compute_zm1_features(df: pd.DataFrame) -> pd.DataFrame:
     else:
         df["battery_report_age_days"] = ((snapshot - df["BatteryLatestReport_dt"]).dt.total_seconds() / (3600.0 * 24.0)).fillna(0.0)
 
-    # ZM1 does NOT measure current or temperature
     df["LineCurrent_val"] = 0.0
     df["LineTemperature_val"] = 0.0
     df["zero_current_flag"] = 0
@@ -199,25 +192,17 @@ def compute_zm1_features(df: pd.DataFrame) -> pd.DataFrame:
     df["critical_current_flag"] = 0
     df["overheat_flag"] = 0
 
-    # Calculate device age in months
     if "device_age_days" in df.columns:
         df["device_age_months"] = df["device_age_days"] / 30.44
         df["device_age_months"] = df["device_age_months"].fillna(0)
     else:
         df["device_age_months"] = 0.0
-        
-    # ===== BATTERY DRAIN RATE - USE OBSERVED DATA =====
-    # Check if we have drain rate from device profiles (observed data)
+
     if "battery_drain_rate_per_day" in df.columns and df["battery_drain_rate_per_day"].notna().any():
-        # Use the observed drain rate from device profiles
-        # This is already calculated from actual battery readings over time
         print("Using observed battery drain rates from device profiles")
-        # Keep existing values, just ensure no NaN
         df["battery_drain_rate_per_day"] = df["battery_drain_rate_per_day"].fillna(0.027)
         df["battery_drain_rate"] = df["battery_drain_rate_per_day"] * 365.0
     else:
-        # Fallback calculation if no observed data available
-        # This uses the device's expected lifetime
         ZM1_DESIGN_LIFETIME_DAYS = 10 * 365
         
         if "expected_lifetime_days" in df.columns:
@@ -232,7 +217,6 @@ def compute_zm1_features(df: pd.DataFrame) -> pd.DataFrame:
             df["battery_drain_rate_per_day"] = (base_yearly_rate / 365.0) * aging_multiplier
             df["battery_drain_rate"] = df["battery_drain_rate_per_day"] * 365.0
         else:
-            # Last resort fallback
             base_yearly_rate = 10.0
             if "pct_life_used" in df.columns:
                 age_factor = df["pct_life_used"].fillna(0)
@@ -242,12 +226,10 @@ def compute_zm1_features(df: pd.DataFrame) -> pd.DataFrame:
             df["battery_drain_rate_per_day"] = (base_yearly_rate / 365.0) * aging_multiplier
             df["battery_drain_rate"] = base_yearly_rate * aging_multiplier
     
-    # Ensure minimum positive drain rate
     MIN_DAILY_DRAIN = 0.1 / 365.0
     df["battery_drain_rate_per_day"] = df["battery_drain_rate_per_day"].clip(lower=MIN_DAILY_DRAIN)
     df["battery_drain_rate"] = df["battery_drain_rate"].clip(lower=0.1)
 
-    # Add battery acceleration factor
     if "pct_life_used" in df.columns:
         df["aging_acceleration_factor"] = 1 + (df["pct_life_used"] ** 2) * 2
         df["battery_degradation_factor"] = df["aging_acceleration_factor"]
@@ -257,17 +239,14 @@ def compute_zm1_features(df: pd.DataFrame) -> pd.DataFrame:
         
     df["temperature_exceedence_count"] = 0
     
-    # AGE ADJUSTED BATTERY RISK
     df["age_adjusted_battery_risk"] = df["battery_drain_rate"] * (df["device_age_months"] / 24.0)
     df["age_adjusted_battery_risk"] = df["age_adjusted_battery_risk"].fillna(0).clip(upper=100)
     df["old_and_hot_flag"] = 0
     
-    # Maintenance urgency
     age_component = (df["device_age_months"] / 120.0).fillna(0).clip(upper=1.0)
     battery_component = (df["battery_drain_rate"] / 20.0).clip(upper=1.0)
     df["maintenance_urgency_score"] = (age_component * 0.4 + battery_component * 0.6).clip(upper=1.0).round(3)
     
-    # ===== RISK CALCULATION =====
     risk = (
         0.25 * normalize(df["comm_age_days"], cap=365) +
         0.25 * normalize(df["battery_report_age_days"], cap=180) +
@@ -276,12 +255,10 @@ def compute_zm1_features(df: pd.DataFrame) -> pd.DataFrame:
         0.10 * normalize(df["maintenance_urgency_score"], cap=1.0)
     ) * 100.0
 
-    # Penalties
     risk += 30.0 * df["battery_low_flag"]
     risk += np.where(df["pct_life_used"] > 0.9, 20.0, 0.0)
     risk += np.where(df["battery_report_age_days"] > 180, 15.0, 0.0)
     
-    # Missing data penalties
     if "Last_Heard_dt" in df.columns:
         risk += np.where(df["Last_Heard_dt"].isna(), 30.0, 0.0)
     if "InstallDate_dt" in df.columns:
@@ -359,14 +336,13 @@ def compute_mm3_features(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 # ====================================================
-# explain_risk - No RELOCATE, all RECONFIGURE
+# explain_risk
 # ====================================================
 
 def explain_risk(row):
     reasons = []
     device_type = str(row.get("Device_Type", "")).upper()
     
-    # Get reconfigure history
     reconfigure_count = 0
     if 'Serial' in row.index and pd.notna(row.get('Serial')):
         try:
@@ -374,7 +350,6 @@ def explain_risk(row):
         except:
             pass
     
-    # Add reconfigure context
     if reconfigure_count > 0:
         if reconfigure_count == 1:
             reasons.append(f"Reconfigure attempted {reconfigure_count} time")
@@ -383,22 +358,18 @@ def explain_risk(row):
         if reconfigure_count >= 2:
             reasons.append("Multiple reconfigure attempts - consider replacement after 48 hours if no improvement")
 
-    # Critical missing data checks
     if pd.isna(row.get("Last_Heard_dt")) or pd.isna(row.get("Last_Heard")):
         reasons.append("Missing Last_Heard date")
     
-    # GPS/Sensor Issues - all lead to RECONFIGURE
     if row.get('gps_jump_flag', 0) == 1:
         reasons.append("GPS drift detected - reconfigure recommended")
     
     if row.get('coord_missing_flag', 0) == 1:
         reasons.append("GPS coordinates missing - reconfigure recommended")
     
-    # ZM1-specific
     if "ZM1" in device_type:
-        # Check drain rate if available
         drain_rate = row.get("battery_drain_rate", 0)
-        if drain_rate > 40:  # >40% per year is fast
+        if drain_rate > 40:
             reasons.append(f"Battery draining fast ({drain_rate:.0f}%/year)")
         elif drain_rate > 20:
             reasons.append(f"Battery draining faster than expected ({drain_rate:.0f}%/year)")
@@ -411,7 +382,6 @@ def explain_risk(row):
             else:
                 reasons.append("Battery still low after reconfigure - consider replacement after 48 hours if no improvement")
     
-    # MM3-specific
     elif "MM3" in device_type:
         if row.get("critical_current_flag", 0) == 1:
             current = row.get("LineCurrent_val", 0)
@@ -419,7 +389,7 @@ def explain_risk(row):
         elif row.get("overheat_flag", 0) == 1:
             temp = row.get("LineTemperature_val", 0)
             if reconfigure_count == 0:
-                reasons.append(f"Overheating ({temp:.1f}°C) - check ventilation")
+                reasons.append(f"Overheating ({temp:.1f}C) - check ventilation")
             else:
                 reasons.append(f"Still overheating after reconfigure - consider replacement after 48 hours if no improvement")
         elif row.get("high_current_flag", 0) == 1:
@@ -462,7 +432,6 @@ def explain_risk(row):
         if pd.isna(row.get("LineTemperature_val")):
             reasons.append("Missing temperature data")
 
-    # UM3-specific
     elif "UM3" in device_type or "UM3+" in device_type:
         comm_age = row.get("comm_age_days", 0)
         if comm_age > 90:
@@ -535,16 +504,24 @@ def build_health_features(df_devices: pd.DataFrame, install_df: Optional[pd.Data
     
     if install_df is not None:
         df = add_install_age_features(df, install_df)
-    
+
+    # Ensure pct_life_used and related columns always exist
+    if "pct_life_used" not in df.columns:
+        df["pct_life_used"] = 0.0
+    if "device_age_days" not in df.columns:
+        df["device_age_days"] = np.nan
+    if "InstallDate_dt" not in df.columns:
+        df["InstallDate_dt"] = pd.NaT
+    if "expected_lifetime_days" not in df.columns:
+        df["expected_lifetime_days"] = df["Device_Type_Standardized"].apply(_expected_lifetime_for_type)
+
     df["comm_age_days"] = df["comm_age_days"].clip(upper=365)
-    if "pct_life_used" in df.columns:
-        df["pct_life_used"] = df["pct_life_used"].fillna(0).clip(upper=1.0)
+    df["pct_life_used"] = df["pct_life_used"].fillna(0).clip(upper=1.0)
     
     df = add_gps_drift_features(df)
     df = add_variance_features(df)
     df = add_frequency_features(df)
     
-    # Initialize shared flags & risk columns
     for col in [
         "battery_level", "battery_low_flag", "battery_warning_flag", "battery_report_age_days",
         "LineCurrent_val", "LineTemperature_val", "zero_current_flag", "low_current_flag",

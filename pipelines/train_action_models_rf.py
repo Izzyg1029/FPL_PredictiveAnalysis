@@ -2,8 +2,7 @@
 Train one RandomForest per device_type to predict action_label:
   0 = NO_ACTION
   1 = RECONFIGURE
-  2 = RELOCATE
-  3 = REPLACE
+  2 = REPLACE
 """
 from pathlib import Path
 import argparse, json

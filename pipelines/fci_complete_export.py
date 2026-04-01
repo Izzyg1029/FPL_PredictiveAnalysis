@@ -6,6 +6,7 @@ from pathlib import Path
 import numpy as np
 from datetime import datetime
 import joblib
+import os
 
 print("SCRIPT STARTING - If you see this, Python is working")
 import sys
@@ -30,20 +31,25 @@ def check_if_already_ran(output_file):
         file_time = datetime.fromtimestamp(output_file.stat().st_mtime)
         time_diff = datetime.now() - file_time
         hours = time_diff.total_seconds() / 3600
-        
+
         print(f"\n EXPORT FILE ALREADY EXISTS")
         print(f"   File: {output_file.name}")
         print(f"   Created: {file_time.strftime('%Y-%m-%d %H:%M:%S')}")
         print(f"   Age: {hours:.1f} hours ago")
         print(f"   Size: {output_file.stat().st_size / 1024 / 1024:.1f} MB")
-        
+
+        # If running in GitHub Actions, always regenerate automatically
+        if os.environ.get("CI"):
+            print("  Running in CI/GitHub Actions - auto regenerating...")
+            return True
+
         if hours < 1:
-            print(f"     File is very recent (<1 hour old)")
+            print(f"  File is very recent (<1 hour old)")
         elif hours < 24:
-            print(f"    File is from today")
+            print(f"  File is from today")
         else:
-            print(f"   File is {hours/24:.1f} days old")
-        
+            print(f"  File is {hours/24:.1f} days old")
+
         response = input("\nDo you want to regenerate the export? (y/n): ")
         return response.lower() == 'y'
     return True

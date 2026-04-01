@@ -1,29 +1,35 @@
 name: Scheduled FCI Predictive Analysis
 on:
   schedule:
-    - cron: '0 * * * *'   # Every hour
+    - cron: '0 * * * *'
   workflow_dispatch:
-
 jobs:
   run-pipeline:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      CI: true
+      GOOGLE_CREDENTIALS: ${{ secrets.GOOGLE_CREDENTIALS }}
     steps:
       - name: Checkout repo
-        uses: actions/checkout@v4
+        uses: actions/checkout@v4.2.2
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v5.4.0
         with:
           python-version: '3.11'
 
       - name: Install dependencies
-        run: pip install pandas numpy openpyxl scikit-learn
+        run: pip install pandas numpy openpyxl scikit-learn joblib pyarrow google-api-python-client google-auth gdown
 
       - name: Run pipeline
         run: python pipelines/run_full_pipeline.py
 
       - name: Upload outputs
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v4.6.2
         with:
           name: pipeline-outputs
-          path: powerbi_exports/
+          path: powerbi_exports/FCI_Device_Health_Export.csv

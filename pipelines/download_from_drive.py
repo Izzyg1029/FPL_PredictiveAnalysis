@@ -13,6 +13,7 @@ import logging
 import zipfile
 import subprocess
 import sys
+import os
 from pathlib import Path
 import gdown
 
@@ -162,4 +163,6 @@ if __name__ == "__main__":
     else:
         log.info("No new files — skipping quality pipeline.")
 
-    input("\nPress Enter to exit...")
+    # Only pause when running locally, not in GitHub Actions
+    if not os.environ.get("CI"):
+        input("\nPress Enter to exit...")

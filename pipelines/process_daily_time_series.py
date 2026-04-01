@@ -325,8 +325,8 @@ def create_device_profiles(time_series_df):
                     # ===== NEW: Calculate battery metrics from observed data =====
                     def calculate_battery_metrics(device_data):
                         device_data = device_data.sort_values('date')
-                        battery_readings = device_data['battery_level'].values
-                        dates = device_data['date'].values
+                        battery_readings = pd.to_numeric(device_data['battery_level'], errors='coerce').values
+                        dates = pd.to_datetime(device_data['date'], errors='coerce').values
                         
                         if len(battery_readings) < 2:
                             return {
@@ -337,7 +337,7 @@ def create_device_profiles(time_series_df):
                         
                         baseline_battery = battery_readings[0]
                         current_battery = battery_readings[-1]
-                        time_span = (dates[-1] - dates[0]).days
+                        time_span = (pd.to_datetime(dates[-1]) - pd.to_datetime(dates[0])).days
                         
                         if time_span > 0 and baseline_battery > 0:
                             total_drain = baseline_battery - current_battery

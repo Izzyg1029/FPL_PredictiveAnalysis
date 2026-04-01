@@ -1,4 +1,4 @@
-# label_actions.py - UPDATED VERSION (90-day rule, RECONFIGURE focus)
+# FIXED: Consistent column naming (Device_Type), comm_age_days, and all rules
 
 from pathlib import Path
 import argparse
@@ -8,14 +8,21 @@ import numpy as np
 HISTORY_PATH = Path("data/processed/fci_history.parquet")
 OUT_PATH = Path("data/processed/fci_labeled.parquet")
 
+EXPECTED_LIFETIME_YEARS = 10  # default device lifetime
+PCT_LIFE_REPLACE_THRESHOLD = 90  # replace if past this % of lifetime
+
 LABEL_TO_NAME = {
     0: "NO_ACTION",
     1: "RECONFIGURE",
+<<<<<<< HEAD
     2: "REPLACE",  # Direct replacement after reconfigure fails
+=======
+    2: "REPLACE",
+>>>>>>> d96ba2278969d95a3cbd7efc2f4d3894fdd1fb02
 }
 
 # Only label these device types
-ACTIVE_DEVICE_TYPES = ["MM3", "ZM1", "UM3+"]  # Added UM3+ back for completeness
+ACTIVE_DEVICE_TYPES = ["MM3", "ZM1"]
 
 def _coalesce_col(df, candidates):
     """Find first existing column from list of candidates"""
@@ -113,14 +120,21 @@ def main():
     if ts_col is None:
         raise KeyError("Missing timestamp column!")
 
-    # timestamp handling - keep all devices
+    # timestamp
     df[ts_col] = pd.to_datetime(df[ts_col], errors="coerce")
     print(f"\n Missing timestamp before handling: {df[ts_col].isna().sum()} rows")
 
     # Get max timestamp for filling missing values
     max_timestamp = df[ts_col].max()
+    df[ts_col].fillna(max_timestamp, inplace=True)
+
+    # Mark devices that had missing timestamps
+    df['timestamp_was_missing'] = df[ts_col].isna()  # This will be False after fillna, so we need a different approach
+
+    # Better: Mark before filling
     df['timestamp_missing'] = df[ts_col].isna()
     df[ts_col].fillna(max_timestamp, inplace=True)
+
     print(f"After handling: {df[ts_col].isna().sum()} rows still missing")
 
     if temp_col is not None:
@@ -128,8 +142,25 @@ def main():
         df["overheat_flag"] = (df[temp_col] > 85).astype(int)
         print(f"overheat_flag: {df['overheat_flag'].sum()} devices (temp > 85C)")
 
+    print("\n Missing timestamp by device type:")
+    print(df.groupby('Device_Type')[ts_col].apply(lambda x: x.isna().sum()))
+    #df = df[~df[ts_col].isna()].copy()
     df["BatteryLatestReport"] = df[ts_col]
 
+    print(f"After timestamp filter: {len(df)} rows, ZM1: {(df['Device_Type']=='ZM1').sum()}, MM3: {(df['Device_Type']=='MM3').sum()}")
+    df[ts_col] = pd.to_datetime(df[ts_col], errors="coerce")
+    print(f"After timestamp conversion: {len(df)} rows, ZM1: {(df['Device_Type']=='ZM1').sum()}, MM3: {(df['Device_Type']=='MM3').sum()}")
+
+    # After temperature flag creation
+    if temp_col is not None:
+        df[temp_col] = pd.to_numeric(df[temp_col], errors="coerce")
+        df["overheat_flag"] = (df[temp_col] > 85).astype(int)
+        print(f"After temp flags: {len(df)} rows, ZM1: {(df['Device_Type']=='ZM1').sum()}, MM3: {(df['Device_Type']=='MM3').sum()}")
+
+    # After timestamp filter - THIS IS THE KEY ONE
+    #df = df[~df[ts_col].isna()].copy()
+    df["BatteryLatestReport"] = df[ts_col]
+    print(f"After timestamp filter: {len(df)} rows, ZM1: {(df['Device_Type']=='ZM1').sum()}, MM3: {(df['Device_Type']=='MM3').sum()}")
     # battery low flag
     if battery_col is not None:
         df[battery_col] = pd.to_numeric(df[battery_col], errors="coerce")
@@ -168,7 +199,7 @@ def main():
         df["zero_current_flag"] = 0
         print("No current column - zero_current_flag = 0")
 
-    # coordinate missing flag
+    # coordinate missing flag + location change (relocation indicator)
     if lat_col is not None and lon_col is not None:
         df[lat_col] = pd.to_numeric(df[lat_col], errors="coerce")
         df[lon_col] = pd.to_numeric(df[lon_col], errors="coerce")
@@ -176,12 +207,46 @@ def main():
         missing_lon = df[lon_col].isna() | (df[lon_col] == 0)
         df["coord_missing_flag"] = (missing_lat | missing_lon).astype(int)
         print(f"coord_missing_flag: {df['coord_missing_flag'].sum()} devices")
+
+        # Detect latitude/longitude drift vs previous reading (relocate trigger)
+        # Sort by Serial + timestamp to compute per-device previous coordinates
+        if ts_col is not None:
+            df_sorted = df.sort_values([ts_col])
+            df["prev_lat"] = df_sorted.groupby("Serial")[lat_col].shift(1)
+            df["prev_lon"] = df_sorted.groupby("Serial")[lon_col].shift(1)
+        else:
+            df["prev_lat"] = np.nan
+            df["prev_lon"] = np.nan
+
+        lat_changed = (~df["prev_lat"].isna()) & (~df[lat_col].isna()) & (
+            (df[lat_col] - df["prev_lat"]).abs() > 0.001  # ~100m threshold
+        )
+        lon_changed = (~df["prev_lon"].isna()) & (~df[lon_col].isna()) & (
+            (df[lon_col] - df["prev_lon"]).abs() > 0.001
+        )
+        df["coord_changed_flag"] = (lat_changed | lon_changed).astype(int)
+        print(f"coord_changed_flag: {df['coord_changed_flag'].sum()} devices with location change")
     else:
         df["coord_missing_flag"] = 0
-        print("No coordinate columns - coord_missing_flag = 0")
+        df["coord_changed_flag"] = 0
+        df["prev_lat"] = np.nan
+        df["prev_lon"] = np.nan
+        print("No coordinate columns - coord_missing_flag/coord_changed_flag = 0")
     
+    # -- Compute pct_life_used from InstallDate if available ----------------
+    if "InstallDate" in df.columns:
+        df["InstallDate"] = pd.to_datetime(df["InstallDate"], errors="coerce")
+        ref_date = df[ts_col].max() if ts_col else pd.Timestamp.now()
+        df["device_age_days"] = (ref_date - df["InstallDate"]).dt.days.clip(lower=0)
+        df["expected_lifetime_days"] = EXPECTED_LIFETIME_YEARS * 365
+        df["pct_life_used"] = (df["device_age_days"] / df["expected_lifetime_days"] * 100).round(1)
+        print(f"  pct_life_used > {PCT_LIFE_REPLACE_THRESHOLD}%: {(df['pct_life_used'] > PCT_LIFE_REPLACE_THRESHOLD).sum()} devices")
+    elif "pct_life_used" not in df.columns:
+        df["pct_life_used"] = np.nan
+        df["device_age_days"] = np.nan
+
     # Ensure all flag columns exist that might be used in rules
-    required_flags = ['gps_jump_flag', 'coord_missing_flag', 'zero_current_flag', 
+    required_flags = ['gps_jump_flag', 'coord_missing_flag', 'coord_changed_flag', 'zero_current_flag', 
                     'overheat_flag', 'online_flag', 'intermittent_flag',
                     'critical_current_flag', 'high_current_flag', 'low_current_flag']
 
@@ -194,20 +259,26 @@ def main():
     df["action_name"] = "NO_ACTION"
     df["action_label"] = 0
 
-    # Create masks for different device types
+    # Create masks for different device types - using original Device_Type column
     print("\n Creating device type masks...")
     print(f"Device_Type column exists: {'Device_Type' in df.columns}")
     print(f"Sample Device_Type values: {df['Device_Type'].head(5).tolist()}")
 
+    # Create masks for different device types - ensure string comparison
     is_zm1 = df["Device_Type"].astype(str).str.strip() == "ZM1"
     is_mm3 = df["Device_Type"].astype(str).str.strip() == "MM3"
     is_um3 = df["Device_Type"].astype(str).str.strip() == "UM3+"
     
+
     print(f"ZM1 devices: {is_zm1.sum()}")
     print(f"MM3 devices: {is_mm3.sum()}")
     print(f"UM3+ devices: {is_um3.sum()}")
 
-    # ===== TRACKING VARIABLES for reconfigure history =====
+    print(f"\n Total rows in dataframe: {len(df)}")
+    print(f"Device_Type value counts at this point:")
+    print(df['Device_Type'].value_counts())
+
+    # ===== TRACKING VARIABLES for 48-hour rule =====
     if 'reconfigure_count' not in df.columns:
         df['reconfigure_count'] = 0
     if 'last_reconfigure_time' not in df.columns:
@@ -217,7 +288,7 @@ def main():
     if 'battery_level' not in df.columns:
         df['battery_level'] = np.nan
 
-    # ===== ZM1 RULES with 90-day window =====
+    # ===== ZM1 RULES with 48-hour reconfigure window =====
 
     # FIRST TIME ISSUES - try RECONFIGURE
     zm1_first_time = is_zm1 & (df["reconfigure_count"] == 0) & (
@@ -235,7 +306,7 @@ def main():
         (df["coord_missing_flag"] == 1) |
         (df["gps_jump_flag"] == 1) |
         (pd.isna(df.get("BatteryLevel", pd.Series(index=df.index)))) |
-        ((df["comm_age_days"] > 90))
+        ((df["comm_age_days"] > 30))
     )
     df.loc[zm1_retry, "action_name"] = "RECONFIGURE"
     df.loc[zm1_retry, "action_label"] = 1
@@ -253,13 +324,19 @@ def main():
     # Battery still low after reconfigure -> REPLACE
     zm1_replace = zm1_after_reconfigure & (df["battery_low_flag"] == 1)
     df.loc[zm1_replace, "action_name"] = "REPLACE"
-    df.loc[zm1_replace, "action_label"] = 2  # Changed from 3 to 2
+    df.loc[zm1_replace, "action_label"] = 2
     print(f"ZM1 REPLACE (battery): {zm1_replace.sum()}")
 
     # Still no communication after reconfigure -> REPLACE
     zm1_replace_comms = zm1_after_reconfigure & (df["comm_age_days"] > 90)
+
+    # Past 90% of lifetime -> REPLACE regardless of reconfigure status
+    zm1_replace_age = is_zm1 & (df["pct_life_used"].fillna(0) > PCT_LIFE_REPLACE_THRESHOLD)
+    df.loc[zm1_replace_age, "action_name"] = "REPLACE"
+    df.loc[zm1_replace_age, "action_label"] = 2
+    print(f"  ZM1 REPLACE (age > {PCT_LIFE_REPLACE_THRESHOLD}% lifetime): {zm1_replace_age.sum()}")
     df.loc[zm1_replace_comms, "action_name"] = "REPLACE"
-    df.loc[zm1_replace_comms, "action_label"] = 2  # Changed from 3 to 2
+    df.loc[zm1_replace_comms, "action_label"] = 2
     print(f"ZM1 REPLACE (comms): {zm1_replace_comms.sum()}")
 
     # URGENT REPLACE - battery critically low (<10%) and recent comms (skip reconfigure)
@@ -269,10 +346,10 @@ def main():
             (df["comm_age_days"] < 7)
         )
         df.loc[zm1_replace_urgent, "action_name"] = "REPLACE"
-        df.loc[zm1_replace_urgent, "action_label"] = 2  # Changed from 3 to 2
+        df.loc[zm1_replace_urgent, "action_label"] = 2
         print(f"ZM1 URGENT REPLACE: {zm1_replace_urgent.sum()}")
 
-    # ===== MM3 RULES with 90-day window =====
+    # ===== MM3 RULES with 48-hour reconfigure window =====
     
     print("\n MM3 RULE COUNTS:")
     
@@ -296,7 +373,7 @@ def main():
         (df["overheat_flag"] == 1) |
         (df["high_current_flag"] == 1) |
         (df["zero_current_flag"] == 1) |
-        ((df["comm_age_days"] > 90))
+        ((df["comm_age_days"] > 30))
     )
     df.loc[mm3_retry, "action_name"] = "RECONFIGURE"
     df.loc[mm3_retry, "action_label"] = 1
@@ -310,7 +387,7 @@ def main():
         ((df["comm_age_days"] > 90))
     )
     df.loc[mm3_replace, "action_name"] = "REPLACE"
-    df.loc[mm3_replace, "action_label"] = 2  # Changed from 3 to 2
+    df.loc[mm3_replace, "action_label"] = 2
     print(f"MM3 REPLACE: {mm3_replace.sum()}")
 
     # RECONFIGURE for MM3 - coord/location issues:
@@ -362,7 +439,7 @@ def main():
         (df["offline_flag"] == 1)
     )
     df.loc[um3_replace, "action_name"] = "REPLACE"
-    df.loc[um3_replace, "action_label"] = 2  # Changed from 3 to 2
+    df.loc[um3_replace, "action_label"] = 2
     print(f"UM3+ REPLACE: {um3_replace.sum()}")
 
     # RECONFIGURE for UM3+ - coord/location issues
