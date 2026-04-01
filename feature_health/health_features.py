@@ -381,7 +381,7 @@ def explain_risk(row):
         else:
             reasons.append(f"Reconfigure attempted {reconfigure_count} times")
         if reconfigure_count >= 2:
-            reasons.append("Multiple reconfigure attempts - consider replacement after 90 days")
+            reasons.append("Multiple reconfigure attempts - consider replacement after 48 hours if no improvement")
 
     # Critical missing data checks
     if pd.isna(row.get("Last_Heard_dt")) or pd.isna(row.get("Last_Heard")):
@@ -409,7 +409,7 @@ def explain_risk(row):
             if reconfigure_count == 0:
                 reasons.append("Battery critically low - reconfigure to verify")
             else:
-                reasons.append("Battery still low after reconfigure - consider replacement after 90 days")
+                reasons.append("Battery still low after reconfigure - consider replacement after 48 hours if no improvement")
     
     # MM3-specific
     elif "MM3" in device_type:
@@ -421,7 +421,7 @@ def explain_risk(row):
             if reconfigure_count == 0:
                 reasons.append(f"Overheating ({temp:.1f}°C) - check ventilation")
             else:
-                reasons.append(f"Still overheating after reconfigure - consider replacement after 90 days")
+                reasons.append(f"Still overheating after reconfigure - consider replacement after 48 hours if no improvement")
         elif row.get("high_current_flag", 0) == 1:
             current = row.get("LineCurrent_val", 0)
             reasons.append(f"High current ({current:.1f}A) - investigate")
@@ -469,7 +469,7 @@ def explain_risk(row):
             if reconfigure_count == 0:
                 reasons.append(f"No communication for {comm_age:.0f} days - reconfigure")
             else:
-                reasons.append(f"Still no communication after reconfigure - consider replacement after 90 days")
+                reasons.append(f"Still no communication after reconfigure - consider replacement after 48 hours if no improvement")
         elif comm_age > 30:
             if reconfigure_count == 0:
                 reasons.append(f"No communication for {comm_age:.0f} days - reconfigure")

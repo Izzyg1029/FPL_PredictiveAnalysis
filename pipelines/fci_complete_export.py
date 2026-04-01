@@ -84,9 +84,6 @@ def load_model_bundle(device_type: str):
     except:
         return None, None
     return None, None
-    print("\n Loading device history...")
-    df = pd.read_parquet(HISTORY_PATH)
-    print(f"DEBUG: Loaded {len(df):,} rows")
 
 def create_battery_categories(df):
     """Add battery health categories for Power BI"""
@@ -223,41 +220,90 @@ def add_replacement_dates(df):
     return df
 
 def add_ttl_and_age(df):
-    """Add Time-to-Live and device age columns"""
+    """Add Time-to-Live and device age columns using observed drain rates"""
     print("\n Adding TTL and device age columns...")
     
     # Check if we have battery data
-    if 'BatteryLevel' in df.columns:
-        print("   Found battery data - calculating TTL for ZM1 devices")
-        
-        # For ZM1 devices only
-        zm1_mask = df['device_type'] == 'ZM1'
-        
-        # We need a drain rate - use a default or estimate
-        # Typical ZM1 battery drain is about 0.027% per day (10-year life)
-        DEFAULT_DRAIN_RATE = 0.027  # % per day
-        
-        # Create TTL columns
+    if 'BatteryLevel' not in df.columns:
+        print("   WARNING: Cannot calculate TTL - missing battery data")
+        # Initialize TTL columns as NaN
         df['ttl_days'] = np.nan
-        df.loc[zm1_mask, 'ttl_days'] = df.loc[zm1_mask, 'BatteryLevel'] / DEFAULT_DRAIN_RATE
+        df['ttl_months'] = np.nan
+        df['ttl_years'] = np.nan
+        df['ttl_category'] = 'Unknown'
+        return df
+    
+    print("   Found battery data - calculating TTL for ZM1 devices")
+    
+    # For ZM1 devices only (other device types don't have battery data)
+    zm1_mask = df['device_type'] == 'ZM1'
+    
+    # Check if we have observed drain rates from health_features
+    if 'battery_drain_rate_per_day' in df.columns and df.loc[zm1_mask, 'battery_drain_rate_per_day'].notna().any():
+        # Use the observed drain rate (calculated from actual battery readings over time)
+        print("    Using observed battery drain rates from device profiles")
+        drain_rate = df.loc[zm1_mask, 'battery_drain_rate_per_day']
+    else:
+        # Fallback to default if no observed data
+        print("     No observed drain rates found - using default 0.027%/day")
+        print("      (This assumes perfect 10-year life from 100% battery)")
+        DEFAULT_DRAIN_RATE = 0.027  # % per day (10-year life from 100%)
+        drain_rate = pd.Series(DEFAULT_DRAIN_RATE, index=df.index)
+    
+    # Initialize TTL columns
+    df['ttl_days'] = np.nan
+    df['ttl_months'] = np.nan
+    df['ttl_years'] = np.nan
+    df['ttl_category'] = 'Unknown'
+    
+    # Calculate TTL only for ZM1 devices with valid battery level and drain rate
+    valid_zm1 = zm1_mask & df['BatteryLevel'].notna()
+    
+    if valid_zm1.any():
+        # Get battery levels and drain rates for valid devices
+        battery_levels = df.loc[valid_zm1, 'BatteryLevel']
+        drain_rates = drain_rate[valid_zm1]
         
-        df['ttl_months'] = df['ttl_days'] / 30.44
-        df['ttl_years'] = df['ttl_days'] / 365
+        # Calculate TTL in days (battery % / drain rate % per day)
+        # Ensure drain_rate > 0 to avoid division by zero
+        drain_rates = drain_rates.clip(lower=0.001)  # Minimum 0.001% per day
+        ttl_days = battery_levels / drain_rates
+        
+        # Store results
+        df.loc[valid_zm1, 'ttl_days'] = ttl_days
+        df.loc[valid_zm1, 'ttl_months'] = ttl_days / 30.44
+        df.loc[valid_zm1, 'ttl_years'] = ttl_days / 365
         
         # TTL categories
-        df['ttl_category'] = np.where(
-            df['ttl_days'] < 30, 'Critical (<1 month)',
-            np.where(df['ttl_days'] < 90, 'Urgent (1-3 months)',
-            np.where(df['ttl_days'] < 180, 'Soon (3-6 months)',
-            np.where(df['ttl_days'] < 365, 'Near (6-12 months)',
+        df.loc[valid_zm1, 'ttl_category'] = np.where(
+            ttl_days < 30, 'Critical (<1 month)',
+            np.where(ttl_days < 90, 'Urgent (1-3 months)',
+            np.where(ttl_days < 180, 'Soon (3-6 months)',
+            np.where(ttl_days < 365, 'Near (6-12 months)',
                     'Future (>1 year)')))
         )
-        print(f"   Added TTL columns for ZM1 devices using default drain rate")
+        
+        print(f" Added TTL columns for {valid_zm1.sum()} ZM1 devices")
+        print(f" Average TTL: {ttl_days.mean():.1f} days ({ttl_days.mean()/365:.1f} years)")
+        print(f"  Critical (<30 days): {(ttl_days < 30).sum()}")
     else:
-        print("   WARNING: Cannot calculate TTL - missing battery data")
+        print("   No ZM1 devices with valid battery data found")
     
-    # Device age not possible without install dates
-    print("   Note: Device age columns not added (install/first_seen data missing)")
+    # Device age if available
+    if 'device_age_days' in df.columns:
+        print("   Found device age data")
+        df['device_age_years'] = df['device_age_days'] / 365
+        df['device_age_years'] = df['device_age_years'].round(1)
+        
+        # Age categories
+        df['age_category'] = pd.cut(
+            df['device_age_years'].fillna(0),
+            bins=[-1, 0.5, 1, 2, 3, 5, 10, 100],
+            labels=['<6 months', '6-12 months', '1-2 years', '2-3 years', '3-5 years', '5-10 years', '10+ years']
+        )
+        print(f"      Average age: {df['device_age_years'].mean():.1f} years")
+    else:
+        print("   Note: Device age data not available (missing install/first_seen dates)")
     
     return df
 def ensure_risk_scores_in_export(df):

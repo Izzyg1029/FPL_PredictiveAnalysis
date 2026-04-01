@@ -11,12 +11,7 @@ OUT_PATH = Path("data/processed/fci_labeled.parquet")
 LABEL_TO_NAME = {
     0: "NO_ACTION",
     1: "RECONFIGURE",
-<<<<<<< HEAD
     2: "REPLACE",  # Direct replacement after reconfigure fails
-=======
-    2: "RECONFIGURE",
-    3: "REPLACE",
->>>>>>> 39bfa3e3c6978781f5cebcd85e95f900d5eef7d8
 }
 
 # Only label these device types
@@ -217,11 +212,6 @@ def main():
         df['reconfigure_count'] = 0
     if 'last_reconfigure_time' not in df.columns:
         df['last_reconfigure_time'] = pd.NaT
-<<<<<<< HEAD
-    if 'hours_since_reconfigure' not in df.columns:
-        df['hours_since_reconfigure'] = 999999
-=======
->>>>>>> 39bfa3e3c6978781f5cebcd85e95f900d5eef7d8
     if 'reconfigure_attempted' not in df.columns:
         df['reconfigure_attempted'] = False
     if 'battery_level' not in df.columns:
@@ -240,13 +230,8 @@ def main():
     df.loc[zm1_first_time, "action_label"] = 1
     print(f"ZM1 first time RECONFIGURE: {zm1_first_time.sum()}")
 
-<<<<<<< HEAD
-    # RETRY RECONFIGURE - if issue persists after 90 days
-    zm1_retry = is_zm1 & (df["reconfigure_count"] == 1) & (df["hours_since_reconfigure"] > 2160) & (  # 90 days = 2160 hours
-=======
     # RETRY RECONFIGURE - if last attempt was >48h ago and issue persists
     zm1_retry = is_zm1 & (df["reconfigure_count"] == 1) & (
->>>>>>> 39bfa3e3c6978781f5cebcd85e95f900d5eef7d8
         (df["coord_missing_flag"] == 1) |
         (df["gps_jump_flag"] == 1) |
         (pd.isna(df.get("BatteryLevel", pd.Series(index=df.index)))) |
@@ -256,10 +241,6 @@ def main():
     df.loc[zm1_retry, "action_label"] = 1
     print(f"ZM1 retry RECONFIGURE: {zm1_retry.sum()}")
 
-<<<<<<< HEAD
-    # AFTER RECONFIGURE FAILED (90+ days later) - now REPLACE
-    zm1_after_reconfigure = is_zm1 & (df["reconfigure_count"] >= 1) & (df["hours_since_reconfigure"] > 2160)
-=======
     # AFTER RECONFIGURE FAILED (48+ hours later) - now consider other actions
     zm1_after_reconfigure = is_zm1 & (df["reconfigure_count"] >= 1)
 
@@ -268,7 +249,6 @@ def main():
     df.loc[zm1_relocate, "action_name"] = "RECONFIGURE"
     df.loc[zm1_relocate, "action_label"] = 1
     print(f"ZM1 coord-issue RECONFIGURE: {zm1_relocate.sum()}")
->>>>>>> 39bfa3e3c6978781f5cebcd85e95f900d5eef7d8
 
     # Battery still low after reconfigure -> REPLACE
     zm1_replace = zm1_after_reconfigure & (df["battery_low_flag"] == 1)
@@ -310,13 +290,8 @@ def main():
     df.loc[mm3_first_time, "action_label"] = 1
     print(f"MM3 first time RECONFIGURE: {mm3_first_time.sum()}")
 
-<<<<<<< HEAD
-    # RETRY RECONFIGURE for MM3 - if issue persists after 90 days
-    mm3_retry = is_mm3 & (df["reconfigure_count"] == 1) & (df["hours_since_reconfigure"] > 2160) & (
-=======
     # RETRY RECONFIGURE for MM3 - if last attempt >48h ago and issue persists
     mm3_retry = is_mm3 & (df["reconfigure_count"] == 1) & (
->>>>>>> 39bfa3e3c6978781f5cebcd85e95f900d5eef7d8
         (df["critical_current_flag"] == 1) |
         (df["overheat_flag"] == 1) |
         (df["high_current_flag"] == 1) |
@@ -327,13 +302,8 @@ def main():
     df.loc[mm3_retry, "action_label"] = 1
     print(f"MM3 retry RECONFIGURE: {mm3_retry.sum()}")
 
-<<<<<<< HEAD
-    # REPLACE for MM3 - issue persists 90+ days after reconfigure
-    mm3_replace = is_mm3 & (df["reconfigure_count"] >= 1) & (df["hours_since_reconfigure"] > 2160) & (
-=======
     # REPLACE for MM3 - issue persists 48+ hours after reconfigure
     mm3_replace = is_mm3 & (df["reconfigure_count"] >= 1) & (
->>>>>>> 39bfa3e3c6978781f5cebcd85e95f900d5eef7d8
         (df["critical_current_flag"] == 1) |
         (df["overheat_flag"] == 1) |
         (df["zero_current_flag"] == 1) |
@@ -343,9 +313,6 @@ def main():
     df.loc[mm3_replace, "action_label"] = 2  # Changed from 3 to 2
     print(f"MM3 REPLACE: {mm3_replace.sum()}")
 
-<<<<<<< HEAD
-    # ===== UM3+ RULES with 90-day window =====
-=======
     # RECONFIGURE for MM3 - coord/location issues:
     #   (a) coord missing 48h after reconfigure, OR
     #   (b) latitude/longitude has changed (device moved), OR
@@ -366,7 +333,6 @@ def main():
     print(f"MM3 coord-issue RECONFIGURE total: {mm3_relocate.sum()}")
 
     # ===== UM3+ RULES with 48-hour reconfigure window =====
->>>>>>> 39bfa3e3c6978781f5cebcd85e95f900d5eef7d8
     
     print("\n UM3+ RULE COUNTS:")
 
@@ -381,28 +347,17 @@ def main():
     df.loc[um3_first_time, "action_label"] = 1
     print(f"UM3+ first time RECONFIGURE: {um3_first_time.sum()}")
 
-<<<<<<< HEAD
-    # RETRY RECONFIGURE for UM3+ - if issue persists after 90 days
-    um3_retry = is_um3 & (df["reconfigure_count"] == 1) & (df["hours_since_reconfigure"] > 2160) & (
-        ((df["comm_age_days"] > 90)) |
-=======
     # RETRY RECONFIGURE for UM3+ - if last attempt >48h ago
     um3_retry = is_um3 & (df["reconfigure_count"] == 1) & (
         ((df["comm_age_days"] > 30)) |
->>>>>>> 39bfa3e3c6978781f5cebcd85e95f900d5eef7d8
         (df["intermittent_flag"] == 1)
     )
     df.loc[um3_retry, "action_name"] = "RECONFIGURE"
     df.loc[um3_retry, "action_label"] = 1
     print(f"UM3+ retry RECONFIGURE: {um3_retry.sum()}")
 
-<<<<<<< HEAD
-    # REPLACE for UM3+ - issue persists 90+ days after reconfigure
-    um3_replace = is_um3 & (df["reconfigure_count"] >= 1) & (df["hours_since_reconfigure"] > 2160) & (
-=======
     # REPLACE for UM3+ - issue persists 48+ hours after reconfigure
     um3_replace = is_um3 & (df["reconfigure_count"] >= 1) & (
->>>>>>> 39bfa3e3c6978781f5cebcd85e95f900d5eef7d8
         ((df["comm_age_days"] > 90)) |
         (df["offline_flag"] == 1)
     )
@@ -410,8 +365,6 @@ def main():
     df.loc[um3_replace, "action_label"] = 2  # Changed from 3 to 2
     print(f"UM3+ REPLACE: {um3_replace.sum()}")
 
-<<<<<<< HEAD
-=======
     # RECONFIGURE for UM3+ - coord/location issues
     um3_relocate = is_um3 & (df["reconfigure_count"] >= 1) & (
         (df["coord_missing_flag"] == 1)
@@ -420,7 +373,6 @@ def main():
     df.loc[um3_relocate, "action_label"] = 1
     print(f"UM3+ coord-issue RECONFIGURE: {um3_relocate.sum()}")
 
->>>>>>> 39bfa3e3c6978781f5cebcd85e95f900d5eef7d8
     # ===== FINAL SUMMARY =====
     print("\n" + "="*60)
     print("FINAL ACTION COUNTS BY DEVICE TYPE:")
